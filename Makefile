@@ -8,6 +8,13 @@ PYTEST ?= $(PYTHON) -m pytest
 # Force the native MPS path instead of the torchvision fallback.
 NATIVE_ENV = DCN_MPS_FORCE_NATIVE=1
 
+# Conda envs often link two OpenMP runtimes (LLVM libomp from torch + Intel
+# libiomp5 from numpy/MKL); importing both aborts with "OMP Error #15".
+# Allow the duplicate so build/test/run work. The clean fix is to dedupe the
+# OpenMP packages in the env (e.g. `conda install nomkl`, or ensure a single
+# openmp/llvm-openmp), after which this can be removed.
+export KMP_DUPLICATE_LIB_OK := TRUE
+
 .DEFAULT_GOAL := help
 
 # ---------------------------------------------------------------------------
