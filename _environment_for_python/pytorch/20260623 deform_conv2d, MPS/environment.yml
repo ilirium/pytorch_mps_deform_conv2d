@@ -1,0 +1,67 @@
+name: pt
+channels:
+  - nodefaults
+  - conda-forge
+  - pytorch-nightly
+dependencies:
+  # https://anaconda.org/pytorch-nightly/repo
+  # https://conda-forge.org/packages/
+  # Step: Python Main
+  - python
+  #- pip
+  #- setuptools
+  - wheel
+
+  # Step: Common
+  - tqdm
+  #- pytest
+
+  # Step: Science
+  - numpy
+  - matplotlib
+
+  # Step: Images
+  - pillow
+
+  # Step: OpenCV
+  #- opencv
+  #- libopencv
+  #- py-opencv
+  #- opencv-python-headless
+  # Documentation about what opencv headless means and how to install it. · Issue #449 · conda-forge/opencv-feedstock
+  # https://github.com/conda-forge/opencv-feedstock/issues/449
+  #- opencv=*=headless*
+  #- py-opencv=*=*headless*
+
+  # Step: Pandas
+  # Recommended dependencies (performance)
+  # https://pandas.pydata.org/pandas-docs/stable/getting_started/install.html#recommended-dependencies
+  - pandas
+  - numexpr
+  - bottleneck
+  - numba
+  # Optional dependencies
+  # https://pandas.pydata.org/pandas-docs/stable/getting_started/install.html#optional-dependencies
+  - PyTables
+  - SciPy
+  - blosc
+  - fastparquet
+  - pyarrow
+  - zlib
+
+  # Step: PyTorch
+  - pytorch-nightly::pytorch
+  - pytorch-nightly::torchvision
+  # >>> PyTorch is an optimized tensor library for deep learning using GPUs and CPUs.
+  #- pytorch-nightly::pytorch>=2.6
+  # >>> image and video datasets and models for torch deep learning
+  #- pytorch-nightly::torchvision
+
+  # >>> simple audio I/O for pytorch
+  #- pytorch-nightly::torchaudio
+  # >>> Data loaders and abstractions for text and NLP
+  #- pytorch-nightly::torchtext
+  # >>> ignite
+  #- pytorch-nightly::ignite
+  # >>> A language and compiler for custom Deep Learning operation
+  #- pytorch-nightly::torchtriton

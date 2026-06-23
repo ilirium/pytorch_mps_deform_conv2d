@@ -216,3 +216,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Step: Project related
+.idea/
+temp/
+
+# files
+*.log
+*.csv
+#*.jpg
+#*.jpeg
+#*.tif
+#*.tiff
+#*.png
+#*.npy
