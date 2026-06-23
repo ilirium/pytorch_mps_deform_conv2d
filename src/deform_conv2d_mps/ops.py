@@ -31,6 +31,10 @@ def _shader_source() -> str:
     with open(os.path.join(here, "deform_conv2d.metal"), "r") as f:
         metal = f.read()
     # newLibraryWithSource: can't resolve local includes; inline the header.
+    # Strip `#pragma once` since the inlined header is no longer a separate file
+    # (it would warn -Wpragma-once-outside-header).
+    header = "\n".join(
+        ln for ln in header.splitlines() if ln.strip() != "#pragma once")
     metal = metal.replace('#include "bilinear.metalh"', header)
     return metal
 

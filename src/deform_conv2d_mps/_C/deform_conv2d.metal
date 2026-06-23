@@ -14,6 +14,7 @@
 // groups and deformable_groups as you move past Phase 1 — see TODOs.
 
 #include <metal_stdlib>
+#include <metal_atomic>
 #include "bilinear.metalh"
 using namespace metal;
 
@@ -117,13 +118,15 @@ kernel void deformable_im2col(
 //   atomic_fetch_add_explicit on `device atomic_float*` for the four corners.
 // ---------------------------------------------------------------------------
 kernel void deformable_col2im(
-        const device float* /*data_col*/    [[buffer(0)]],
-        const device float* /*data_offset*/ [[buffer(1)]],
-        const device float* /*data_mask*/   [[buffer(2)]],
-        device atomic_float* /*grad_im*/    [[buffer(3)]],
-        constant DeformConvParams& /*p*/    [[buffer(4)]],
-        uint /*gid*/                        [[thread_position_in_grid]]) {
+        const device float*  data_col     [[buffer(0)]],
+        const device float*  data_offset  [[buffer(1)]],
+        const device float*  data_mask    [[buffer(2)]],
+        device atomic<float>* grad_im     [[buffer(3)]],
+        constant DeformConvParams& p      [[buffer(4)]],
+        uint gid                          [[thread_position_in_grid]]) {
     // STUB — see TODO above.
+    (void)data_col; (void)data_offset; (void)data_mask;
+    (void)grad_im; (void)p; (void)gid;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,13 +138,15 @@ kernel void deformable_col2im(
 // TODO(Phase 3): port from torchvision deformable_col2im_coord_kernel.
 // ---------------------------------------------------------------------------
 kernel void deformable_col2im_coord(
-        const device float* /*data_col*/    [[buffer(0)]],
-        const device float* /*data_im*/     [[buffer(1)]],
-        const device float* /*data_offset*/ [[buffer(2)]],
-        const device float* /*data_mask*/   [[buffer(3)]],
-        device float* /*grad_offset*/       [[buffer(4)]],
-        device float* /*grad_mask*/         [[buffer(5)]],
-        constant DeformConvParams& /*p*/    [[buffer(6)]],
-        uint /*gid*/                        [[thread_position_in_grid]]) {
+        const device float*  data_col     [[buffer(0)]],
+        const device float*  data_im      [[buffer(1)]],
+        const device float*  data_offset  [[buffer(2)]],
+        const device float*  data_mask    [[buffer(3)]],
+        device float*        grad_offset  [[buffer(4)]],
+        device float*        grad_mask    [[buffer(5)]],
+        constant DeformConvParams& p      [[buffer(6)]],
+        uint gid                          [[thread_position_in_grid]]) {
     // STUB — see TODO above.
+    (void)data_col; (void)data_im; (void)data_offset; (void)data_mask;
+    (void)grad_offset; (void)grad_mask; (void)p; (void)gid;
 }
