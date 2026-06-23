@@ -9,6 +9,9 @@ __pycache__/
 
 # C extensions
 *.so
+*.o
+*.dylib
+*.metallib
 
 # Distribution / packaging
 .Python

@@ -1,0 +1,68 @@
+// bilinear.metalh — shared bilinear sampling helpers for deformable conv kernels.
+//
+// These mirror the helpers in torchvision's CUDA kernel
+// (torchvision/csrc/ops/cuda/deform_conv2d_kernel.cu). Keeping them in one
+// header lets im2col, col2im and col2im_coord share identical math.
+
+#pragma once
+#include <metal_stdlib>
+using namespace metal;
+
+// Forward bilinear sample of `in` (a single H x W channel plane) at (h, w).
+// Returns 0 for out-of-bounds taps, matching the reference implementation.
+inline float bilinear_interpolate(
+        const device float* in,
+        int height, int width,
+        float h, float w) {
+    if (h <= -1 || height <= h || w <= -1 || width <= w) {
+        return 0.0f;
+    }
+
+    int h_low = (int)floor(h);
+    int w_low = (int)floor(w);
+    int h_high = h_low + 1;
+    int w_high = w_low + 1;
+
+    float lh = h - h_low;
+    float lw = w - w_low;
+    float hh = 1.0f - lh;
+    float hw = 1.0f - lw;
+
+    float v1 = (h_low >= 0 && w_low >= 0)      ? in[h_low * width + w_low]   : 0.0f;
+    float v2 = (h_low >= 0 && w_high <= width-1)  ? in[h_low * width + w_high]  : 0.0f;
+    float v3 = (h_high <= height-1 && w_low >= 0)  ? in[h_high * width + w_low]  : 0.0f;
+    float v4 = (h_high <= height-1 && w_high <= width-1) ? in[h_high * width + w_high] : 0.0f;
+
+    float w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
+    return w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4;
+}
+
+// Gradient weight of the bilinear sample w.r.t. the coordinate, used by
+// col2im_coord. `bp_dir == 0` -> d/dh, `bp_dir == 1` -> d/dw.
+inline float get_coordinate_weight(
+        const device float* in,
+        int height, int width,
+        float h, float w, int bp_dir) {
+    if (h <= -1 || height <= h || w <= -1 || width <= w) {
+        return 0.0f;
+    }
+
+    int h_low = (int)floor(h);
+    int w_low = (int)floor(w);
+    int h_high = h_low + 1;
+    int w_high = w_low + 1;
+
+    float lh = h - h_low;
+    float lw = w - w_low;
+
+    float v1 = (h_low >= 0 && w_low >= 0)      ? in[h_low * width + w_low]   : 0.0f;
+    float v2 = (h_low >= 0 && w_high <= width-1)  ? in[h_low * width + w_high]  : 0.0f;
+    float v3 = (h_high <= height-1 && w_low >= 0)  ? in[h_high * width + w_low]  : 0.0f;
+    float v4 = (h_high <= height-1 && w_high <= width-1) ? in[h_high * width + w_high] : 0.0f;
+
+    if (bp_dir == 0) {  // d/dh
+        return (1.0f - lw) * (v3 - v1) + lw * (v4 - v2);
+    } else {            // d/dw
+        return (1.0f - lh) * (v2 - v1) + lh * (v4 - v3);
+    }
+}

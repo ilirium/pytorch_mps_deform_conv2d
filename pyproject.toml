@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64", "wheel", "torch>=2.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deform_conv2d_mps"
+version = "0.0.1"
+description = "Deformable Conv2d (DCNv1/v2) with a native Metal (MPS) kernel for Apple Silicon, API-compatible with torchvision."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Ilya" }]
+dependencies = ["torch>=2.2"]
+
+[project.optional-dependencies]
+test = ["pytest", "torchvision>=0.17"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Non-Python sources shipped inside the package (compiled by setup.py at build time).
+[tool.setuptools.package-data]
+deform_conv2d_mps = ["_C/*.metal", "_C/*.metalh", "_C/*.mm"]
