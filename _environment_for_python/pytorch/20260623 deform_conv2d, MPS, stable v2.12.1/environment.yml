@@ -1,0 +1,44 @@
+name: pt2121
+channels:
+  - nodefaults
+  - conda-forge
+dependencies:
+  # https://anaconda.org/pytorch-nightly/repo
+  # https://conda-forge.org/packages/
+  # Step: Python Main
+  - python
+  #- pip
+  #- setuptools
+  #- wheel
+
+  # Step: Common
+  - tqdm
+  #- pytest
+
+  # Step: Science
+  - numpy
+  - matplotlib
+
+  # Step: Images
+  - pillow
+
+  # Step: Pandas
+  # Recommended dependencies (performance)
+  # https://pandas.pydata.org/pandas-docs/stable/getting_started/install.html#recommended-dependencies
+  - pandas
+  - numexpr
+  - bottleneck
+  - numba
+  # Optional dependencies
+  # https://pandas.pydata.org/pandas-docs/stable/getting_started/install.html#optional-dependencies
+  - PyTables
+  - SciPy
+  - blosc
+  - fastparquet
+  - pyarrow
+  - zlib
+
+  # Step: PyTorch
+  - pip:
+      - torch
+      - torchvision
