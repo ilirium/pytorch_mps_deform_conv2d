@@ -117,11 +117,16 @@ kernel void deformable_im2col(
 // TODO(Phase 3): port from torchvision deformable_col2im_kernel. Use
 //   atomic_fetch_add_explicit on `device atomic_float*` for the four corners.
 // ---------------------------------------------------------------------------
+// NOTE(Phase 3): grad_im must become `device atomic<float>*` for the scatter-
+// add. The `atomic<T>` template needs Metal >= 3.0, so set
+// `opts.languageVersion = MTLLanguageVersion3_0` in the .mm before compiling,
+// and add `#include <metal_atomic>` usage here. Kept as `device float*` for now
+// so the scaffold compiles on the default language version.
 kernel void deformable_col2im(
         const device float*  data_col     [[buffer(0)]],
         const device float*  data_offset  [[buffer(1)]],
         const device float*  data_mask    [[buffer(2)]],
-        device atomic<float>* grad_im     [[buffer(3)]],
+        device float*        grad_im      [[buffer(3)]],
         constant DeformConvParams& p      [[buffer(4)]],
         uint gid                          [[thread_position_in_grid]]) {
     // STUB — see TODO above.
