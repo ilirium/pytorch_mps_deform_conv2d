@@ -1,0 +1,23 @@
+torch 2.6.0
+torchvision 0.21.0
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 0.000e+00  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 0.000e+00  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+[W623 14:23:43.545779000 MPSFallback.mm:14] Warning: The operator 'torchvision::deform_conv2d' is not currently supported on the MPS backend and will fall back to run on the CPU. This may have performance implications. (function operator())
+  [ cpu]    0.066 ms/iter   (    3.3 ms total)
+  [ mps]    1.062 ms/iter   (   53.1 ms total)
+
+  MPS vs CPU: 0.06x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)

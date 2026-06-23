@@ -1,0 +1,22 @@
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+  [ cpu]    0.077 ms/iter   (    3.8 ms total)
+  [ mps]    0.151 ms/iter   (    7.6 ms total)
+
+  MPS vs CPU: 0.51x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)

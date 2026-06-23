@@ -17,13 +17,13 @@ your torch / torchvision build, calling it on an MPS tensor may either:
 To let unsupported ops transparently fall back to the CPU, set the env var
 *before* importing torch:
 
-    PYTORCH_ENABLE_MPS_FALLBACK=1 python example_deform_conv2d_cpu_mps.py
+    PYTORCH_ENABLE_MPS_FALLBACK=1 python example01_deform_conv2d_cpu_mps.py
 
 This script sets it automatically if it is not already set, so the MPS path
 runs either way (natively if available, otherwise via CPU fallback).
 
 Run:
-    python example_deform_conv2d_cpu_mps.py
+    python example01_deform_conv2d_cpu_mps.py
 """
 
 import os
