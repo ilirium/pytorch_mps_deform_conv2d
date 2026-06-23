@@ -1,5 +1,5 @@
 FILE_NAME := "environment"
-ENV_NAME := "pt"
+ENV_NAME := "ptn"
 
 create_venv:
 	mamba env create -f "$(FILE_NAME)".yml
