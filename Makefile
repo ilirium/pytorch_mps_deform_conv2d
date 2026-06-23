@@ -13,13 +13,17 @@ NATIVE_ENV = DCN_MPS_FORCE_NATIVE=1
 # ---------------------------------------------------------------------------
 # Setup / install
 # ---------------------------------------------------------------------------
+# --no-build-isolation is REQUIRED: the extension bakes in the compile-time
+# value of c10::DispatchKey::MPS, which must match the torch you actually run.
+# Build isolation would pull a different torch into an overlay and the enum
+# values can differ (kernel ends up registered under the wrong key, e.g. IPU).
 .PHONY: install
-install:  ## Editable install with test extras (builds the native extension on macOS)
-	$(PIP) install -e ".[test]"
+install:  ## Editable install with test extras (builds against the installed torch)
+	$(PIP) install -e ".[test]" --no-build-isolation
 
 .PHONY: install-deps
-install-deps:  ## Install torch + torchvision only
-	$(PIP) install torch torchvision
+install-deps:  ## Install torch + torchvision + build deps (setuptools, wheel, ninja)
+	$(PIP) install torch torchvision setuptools wheel ninja
 
 # ---------------------------------------------------------------------------
 # Build / compile the native extension

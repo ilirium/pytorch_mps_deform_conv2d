@@ -29,12 +29,22 @@ Nightly, installed 2026-06023:
 ## Install (editable, for development)
 
 ```bash
-pip install -e ".[test]"
+make install            # = pip install -e ".[test]" --no-build-isolation
 ```
 
 Requires macOS + Apple Silicon, Python ≥ 3.9, PyTorch with MPS, torchvision (for
 the reference/fallback and tests). The native extension only builds on macOS;
 elsewhere the package installs Python-only and uses the fallback.
+
+> **Build against your installed torch — use `--no-build-isolation`.** The
+> extension bakes in the compile-time value of `c10::DispatchKey::MPS`, so it
+> must be compiled against the exact torch you run. With pip's default build
+> isolation, a *different* torch gets pulled into a temporary overlay and the
+> `DispatchKey` enum values may differ — the MPS kernel then silently registers
+> under the wrong key (e.g. `IPU`) and calls fail with "not implemented for the
+> MPS device". `--no-build-isolation` (and `make build`) compile against the
+> installed torch and avoid this. This matters especially on nightly builds.
+> Build deps must already be present: `make install-deps`.
 
 ## Usage
 
