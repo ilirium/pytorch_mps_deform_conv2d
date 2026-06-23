@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "Deformable Conv2d (DCNv1/v2) with a native Metal (MPS) kernel for Apple Silicon, API-compatible with torchvision."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Ilya" }]
 dependencies = ["torch>=2.2"]
 

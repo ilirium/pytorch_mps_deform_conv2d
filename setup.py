@@ -26,14 +26,15 @@ if platform.system() == "Darwin":
                     "-std=c++17",
                     "-ObjC++",
                     "-fobjc-arc",
-                    # Embed the shader directory so the .mm can locate .metal at runtime.
-                    "-DSHADER_DIR=\"deform_conv2d_mps/_C\"",
+                    # MPS APIs require macOS 13+; also silences availability warnings
+                    # when the conda toolchain defaults the target to 11.0.
+                    "-mmacosx-version-min=13.0",
                 ]
             },
             extra_link_args=[
+                "-mmacosx-version-min=13.0",
                 "-framework", "Metal",
                 "-framework", "Foundation",
-                "-framework", "MetalPerformanceShaders",
             ],
         )
     ]
