@@ -1,0 +1,37 @@
+% make build
+python3 setup.py build_ext --inplace
+running build_ext
+building 'deform_conv2d_mps._C_ext' extension
+[1/1] c++ -MMD -MF /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o.d -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -I/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include -I/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include -I/Users/ilirium/Dev/mambaforge/envs/ptn/include/python3.14 -c -c /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/src/deform_conv2d_mps/_C/deform_conv2d_mps.mm -o /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o -std=c++20 -ObjC++ -fobjc-arc -mmacosx-version-min=13.0 -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C_ext
+clang++ -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -bundle -undefined dynamic_lookup -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/lib -lc10 -ltorch -ltorch_cpu -ltorch_python -o build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -mmacosx-version-min=13.0 -framework Metal -framework Foundation
+ld: warning: duplicate -rpath '/Users/ilirium/Dev/mambaforge/envs/ptn/lib' ignored
+copying build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -> src/deform_conv2d_mps
+
+% python tests/diag_im2col.py
+OMP: Error #15: Initializing libomp.dylib, but found libomp.dylib already initialized.
+OMP: Hint This means that multiple copies of the OpenMP runtime have been linked into the program. That is dangerous, since it can degrade performance or cause incorrect results. The best thing to do is to ensure that only a single OpenMP runtime is linked into the process, e.g. by avoiding static linking of the OpenMP runtime in any library. As an unsafe, unsupported, undocumented workaround you can set the environment variable KMP_DUPLICATE_LIB_OK=TRUE to allow the program to continue to execute, but that may cause crashes or silently produce incorrect results. For more information, please see http://openmp.llvm.org/
+zsh: abort      python tests/diag_im2col.py
+
+================================ RESOLUTION (2026-07-05) ================================
+Two separate things in this log:
+
+1. Build: clean. -std=c++20 removed the 34 header warnings; only the harmless
+   duplicate -rpath ld note remains.
+
+2. "OMP: Error #15 ... zsh: abort": NOT a bug in the extension or the diag
+   script's logic — the process died during `import torch`. The conda env
+   links two OpenMP runtimes (torch's LLVM libomp + Intel libiomp5 via
+   numpy/MKL); initializing the second aborts. Known issue, already worked
+   around in the Makefile via `export KMP_DUPLICATE_LIB_OK := TRUE`, but the
+   script was run directly (`python tests/diag_im2col.py`), bypassing make.
+
+Fix: tests/diag_im2col.py, tests/diag_dispatch.py and tests/conftest.py now do
+`os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")` BEFORE `import torch`,
+so they work standalone. Also added `make diag` as the one-command path.
+
+Clean long-term fix (optional): dedupe OpenMP in the env, e.g.
+`conda install nomkl` or ensure a single llvm-openmp — then the workaround can
+be dropped everywhere.
+
+Verification: `make diag` (or `python tests/diag_im2col.py`).
+=========================================================================================

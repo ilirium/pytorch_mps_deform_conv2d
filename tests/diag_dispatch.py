@@ -4,6 +4,12 @@ Run:  python tests/diag_dispatch.py
 Paste the full output back.
 """
 
+import os
+
+# OMP Error #15 workaround (duplicate OpenMP runtimes in conda envs);
+# must be set before `import torch`. See Makefile.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import torch
 
 # Import the compiled extension directly so its static initializers

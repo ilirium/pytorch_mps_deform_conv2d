@@ -16,7 +16,14 @@ Ladder:
   3. random offsets + mask    -> same reference, plus full forward vs torchvision
 """
 
+import os
 import sys
+
+# Conda envs often link two OpenMP runtimes (torch's libomp + MKL's libiomp5);
+# importing torch then aborts with "OMP Error #15". The Makefile exports this,
+# but set it here too so `python tests/diag_im2col.py` works standalone.
+# Must happen BEFORE `import torch`.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import torch
 import torch.nn.functional as F

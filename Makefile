@@ -81,6 +81,10 @@ examples:  ## Run the example scripts
 	$(PYTHON) example/example01_deform_conv2d_cpu_mps.py
 	$(PYTHON) example/example02_deform_conv2d_gradcheck.py
 
+.PHONY: diag
+diag:  ## Phase-1 diagnostics: im2col isolation ladder (tests/diag_im2col.py)
+	$(PYTHON) tests/diag_im2col.py
+
 .PHONY: smoke
 smoke:  ## Quick import + version sanity check
 	$(PYTHON) -c "import torch, deform_conv2d_mps as d; \

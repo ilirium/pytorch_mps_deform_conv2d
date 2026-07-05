@@ -1,3 +1,9 @@
+import os
+
+# OMP Error #15 workaround (duplicate OpenMP runtimes in conda envs);
+# must be set before `import torch`, so pytest works without the Makefile.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import pytest
 import torch
 
