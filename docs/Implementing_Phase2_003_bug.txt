@@ -1,0 +1,186 @@
+% make test
+python3 -m pytest -q
+FF.............................................................s...                                                                                                                                                                    [100%]
+================================================================================================================== FAILURES ==================================================================================================================
+___________________________________________________________________________________________________ test_backward_matches_reference[False] ___________________________________________________________________________________________________
+
+use_mask = False
+
+    @requires_mps()
+    @pytest.mark.parametrize("use_mask", [False, True])
+    def test_backward_matches_reference(use_mask):
+        x, w, b, offset, mask = _inputs("mps", use_mask=use_mask)
+        xc, wc, bc, oc, mc = (t.detach().cpu().requires_grad_(True) if t is not None else None
+                              for t in (x, w, b, offset, mask))
+
+        out = deform_conv2d(x, offset, w, bias=b, mask=mask)
+>       out.sum().backward()
+
+tests/test_backward.py:48:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_tensor.py:623: in backward
+    torch.autograd.backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/__init__.py:395: in backward
+    _engine_run_backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/graph.py:979: in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/function.py:325: in apply
+    return user_fn(self, *args)
+           ^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:84: in backward
+    result = info._backward_fn(ctx, *grads)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torchvision/_autograd_registrations.py:165: in _deform_conv2d_backward
+    grad_input, grad_weight, grad_offset, grad_mask, grad_bias = torch.ops.torchvision._deform_conv2d_backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_ops.py:1280: in __call__
+    return self._op(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:151: in autograd_impl
+    result = forward_no_grad(*args, Metadata(keyset, keyword_only_args))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:47: in forward_no_grad
+    result = op.redispatch(keyset & _C._after_autograd_keyset, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <OpOverload(op='torchvision._deform_conv2d_backward', overload='default')>, keyset = DispatchKeySet(MPS)
+args = (tensor([[[[1., 1., 1., 1., 1.],
+          [1., 1., 1., 1., 1.],
+          [1., 1., 1., 1., 1.],
+          [1., 1., 1....ps:0'), tensor([ 0.1498, -1.4959, -1.1567,  0.1220,  1.4427,  0.5314], device='mps:0',
+       requires_grad=True), ...)
+kwargs = {}
+
+    def redispatch(
+        self, /, keyset: torch._C.DispatchKeySet, *args: _P.args, **kwargs: _P.kwargs
+    ) -> _T:
+>       return self._handle.redispatch_boxed(keyset, *args, **kwargs)  # type: ignore[return-value]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       NotImplementedError: The operator 'torchvision::_deform_conv2d_backward' is not currently implemented for the MPS device. If you want this op to be considered for addition please comment on https://github.com/pytorch/pytorch/issues/141287 and mention use-case, that resulted in missing op as well as commit hash eaedf4299d4823c771b19f2bf11614bd7f04b8ef. As a temporary fix, you can set the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be slower than running natively on MPS.
+
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_ops.py:883: NotImplementedError
+___________________________________________________________________________________________________ test_backward_matches_reference[True] ____________________________________________________________________________________________________
+
+use_mask = True
+
+    @requires_mps()
+    @pytest.mark.parametrize("use_mask", [False, True])
+    def test_backward_matches_reference(use_mask):
+        x, w, b, offset, mask = _inputs("mps", use_mask=use_mask)
+        xc, wc, bc, oc, mc = (t.detach().cpu().requires_grad_(True) if t is not None else None
+                              for t in (x, w, b, offset, mask))
+
+        out = deform_conv2d(x, offset, w, bias=b, mask=mask)
+>       out.sum().backward()
+
+tests/test_backward.py:48:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_tensor.py:623: in backward
+    torch.autograd.backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/__init__.py:395: in backward
+    _engine_run_backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/graph.py:979: in _engine_run_backward
+    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/function.py:325: in apply
+    return user_fn(self, *args)
+           ^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:84: in backward
+    result = info._backward_fn(ctx, *grads)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torchvision/_autograd_registrations.py:165: in _deform_conv2d_backward
+    grad_input, grad_weight, grad_offset, grad_mask, grad_bias = torch.ops.torchvision._deform_conv2d_backward(
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_ops.py:1280: in __call__
+    return self._op(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:151: in autograd_impl
+    result = forward_no_grad(*args, Metadata(keyset, keyword_only_args))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_library/autograd.py:47: in forward_no_grad
+    result = op.redispatch(keyset & _C._after_autograd_keyset, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <OpOverload(op='torchvision._deform_conv2d_backward', overload='default')>, keyset = DispatchKeySet(MPS)
+args = (tensor([[[[1., 1., 1., 1., 1.],
+          [1., 1., 1., 1., 1.],
+          [1., 1., 1., 1., 1.],
+          [1., 1., 1....=True), tensor([ 0.1498, -1.4959, -1.1567,  0.1220,  1.4427,  0.5314], device='mps:0',
+       requires_grad=True), ...)
+kwargs = {}
+
+    def redispatch(
+        self, /, keyset: torch._C.DispatchKeySet, *args: _P.args, **kwargs: _P.kwargs
+    ) -> _T:
+>       return self._handle.redispatch_boxed(keyset, *args, **kwargs)  # type: ignore[return-value]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       NotImplementedError: The operator 'torchvision::_deform_conv2d_backward' is not currently implemented for the MPS device. If you want this op to be considered for addition please comment on https://github.com/pytorch/pytorch/issues/141287 and mention use-case, that resulted in missing op as well as commit hash eaedf4299d4823c771b19f2bf11614bd7f04b8ef. As a temporary fix, you can set the environment variable `PYTORCH_ENABLE_MPS_FALLBACK=1` to use the CPU as a fallback for this op. WARNING: this will be slower than running natively on MPS.
+
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/_ops.py:883: NotImplementedError
+========================================================================================================== short test summary info ===========================================================================================================
+FAILED tests/test_backward.py::test_backward_matches_reference[False] - NotImplementedError: The operator 'torchvision::_deform_conv2d_backward' is not currently implemented for the MPS device. If you want this op to be considered for addition please comment on https://github.com/pytorch/pytorch/issues/1...
+FAILED tests/test_backward.py::test_backward_matches_reference[True] - NotImplementedError: The operator 'torchvision::_deform_conv2d_backward' is not currently implemented for the MPS device. If you want this op to be considered for addition please comment on https://github.com/pytorch/pytorch/issues/1...
+2 failed, 64 passed, 1 skipped in 3.88s
+make: *** [test] Error 1
+
+
+% make test-forward-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q tests/test_forward.py
+............................................................s                                                                                                                                                                          [100%]
+60 passed, 1 skipped in 1.56s
+
+
+% make diag
+python3 tests/diag_im2col.py
+PASS  stage1 unfold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 unfold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 unfold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 constant offset +0.5, use_mask=0
+PASS  stage3 random offsets + mask
+PASS  stage3b full forward (N=2, bias) vs torchvision CPU
+
+All stages passed. Next: DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py (Phase 2).
+
+
+% make examples
+python3 example/example01_deform_conv2d_cpu_mps.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+  [ cpu]    0.086 ms/iter   (    4.3 ms total)
+  [ mps]    0.155 ms/iter   (    7.7 ms total)
+
+  MPS vs CPU: 0.55x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)
+python3 example/example02_deform_conv2d_gradcheck.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+output spatial size: 5x5
+
+=== Check 1: CPU vs MPS backward agreement ===
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/graph.py:979: UserWarning: The operator 'torchvision::_deform_conv2d_backward' is not currently supported on the MPS backend and will fall back to run on the CPU. This may have performance implications. (Triggered internally at /Users/runner/work/pytorch/pytorch/aten/src/ATen/mps/MPSFallback.mm:34.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+  forward   max|CPU-MPS| = 2.384e-07
+  grad input  max|CPU-MPS| = 0.000e+00  ok
+  grad weight max|CPU-MPS| = 0.000e+00  ok
+  grad bias   max|CPU-MPS| = 0.000e+00  ok
+  grad offset max|CPU-MPS| = 0.000e+00  ok
+  grad mask   max|CPU-MPS| = 0.000e+00  ok
+  => PASS
+
+=== Check 2: autograd.gradcheck (CPU, float64) ===
+  => PASS
