@@ -2,14 +2,14 @@
 
 **Last updated:** 2026-07-05
 
-**Overall:** Phase 0 done, Phase 1 half-done. Package is usable now via the torchvision fallback; the native Metal path is not yet wired.
+**Overall:** Phase 0 done, Phase 1 code-complete (host wiring + diagnostics written; NOT yet built or run on-device). Package is usable now via the torchvision fallback.
 
 ## Phase overview
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Scaffold & Metal pipeline check (`add_one`) | ✅ Done |
-| 1 | Native forward (`im2col` → matmul → bias) | 🟡 In progress (~50%) |
+| 1 | Native forward (`im2col` → matmul → bias) | 🟡 Code-complete, unverified (needs on-device build + `tests/diag_im2col.py`) |
 | 2 | Forward correctness tests vs torchvision | ⬜ Not started (tests written, run on fallback) |
 | 3 | Native backward (`col2im`, `col2im_coord`) | ⬜ Not started (stubs) |
 | 4 | Backward tests + gradcheck | ⬜ Not started |
@@ -24,14 +24,21 @@
 
 ## What's missing
 
-- Host-side forward dispatch: `deform_conv2d_forward` in `deform_conv2d_mps.mm` is a `TORCH_CHECK(false)` stub — the im2col kernel is never launched.
+- On-device verification of the new forward wiring (written on a non-Mac machine; never compiled or run). Run `make build`, then `python tests/diag_im2col.py`.
 - `deformable_col2im` and `deformable_col2im_coord` kernels are empty stubs.
 - `_DeformConv2dFunction.backward()` raises `NotImplementedError`.
+- `_NATIVE_READY` still `False` in `ops.py` — flip only after Phase 2 passes.
+
+## Phase 1 implementation notes (2026-07-05)
+
+- `deform_conv2d_forward` in `.mm`: validation → column buffer → per-batch `deformable_im2col` dispatch → interleaved ATen `mm` → bias. PSO cache added (`pipeline_for` now memoizes; cleared on library recompile).
+- Threading: the ATen `mm` runs *outside* `dispatch_sync` (ATen MPS ops sync on the same serial queue → deadlock otherwise); each iteration encodes+commits im2col like `add_one`, and the command buffer is re-fetched per iteration.
+- `tests/diag_im2col.py` (Step 5 ladder): identity-weight trick recovers the raw column buffer through the forward; stages = unfold parity → constant offset vs Python bilinear reference → random offset+mask → full pipeline vs torchvision CPU.
 
 ## Next actions
 
-1. Implement forward wiring in `.mm`: column buffer → dispatch `deformable_im2col` per batch element → `weight.view({outC, -1}).mm(columns)` → reshape → bias. (Phase 1)
-2. Run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` against the torchvision CPU reference; fix index-math bugs. (Phase 2)
+1. On a Mac: `make build`, then `python tests/diag_im2col.py` — fix index-math bugs it flags. (Phase 1 exit)
+2. Run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` against the torchvision CPU reference. (Phase 2)
 3. Port the two backward kernels; requires `atomic<float>` → set `MTLLanguageVersion3_0` in compile options. (Phase 3)
 
 ## Environment / constraints
