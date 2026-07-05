@@ -52,6 +52,11 @@ void dcn_compile_library(const std::string& msl_source) {
         NSError* err = nil;
         NSString* src = [NSString stringWithUTF8String:msl_source.c_str()];
         MTLCompileOptions* opts = [MTLCompileOptions new];
+        // Phase 3: deformable_col2im scatter-adds into grad_input via
+        // atomic_fetch_add_explicit on `device atomic_float*`, which requires
+        // MSL >= 3.0 (macOS 13+). The default language version rejects it —
+        // that's why the Phase-0 stub dropped atomic<float>.
+        opts.languageVersion = MTLLanguageVersion3_0;
         g_library = [g_device newLibraryWithSource:src options:opts error:&err];
         TORCH_CHECK(g_library != nil, "Failed to compile Metal library: ",
                     err ? err.localizedDescription.UTF8String : "unknown error");
@@ -103,6 +108,47 @@ at::Tensor add_one(const at::Tensor& input) {
         @autoreleasepool {
             id<MTLComputeCommandEncoder> enc = [cmd_buf computeCommandEncoder];
             id<MTLComputePipelineState> pso = pipeline_for("add_one");
+            [enc setComputePipelineState:pso];
+            [enc setBuffer:getMTLBufferStorage(x)
+                    offset:x.storage_offset() * x.element_size() atIndex:0];
+            [enc setBuffer:getMTLBufferStorage(out)
+                    offset:out.storage_offset() * out.element_size() atIndex:1];
+            [enc setBytes:&n length:sizeof(n) atIndex:2];
+
+            NSUInteger tg = MIN((NSUInteger)pso.maxTotalThreadsPerThreadgroup,
+                                (NSUInteger)n);
+            [enc dispatchThreads:MTLSizeMake(n, 1, 1)
+              threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+            [enc endEncoding];
+            torch::mps::commit();
+        }
+    });
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3, Step 1: atomic_smoke — runtime proof that MSL 3.0 atomic_float
+// scatter-add works before deformable_col2im depends on it. Scatters in[i]
+// into out[i % 4]; the slot sums are order-independent for the integer-valued
+// inputs the diag ladder feeds it, so the check is exact.
+// ---------------------------------------------------------------------------
+at::Tensor atomic_smoke(const at::Tensor& input) {
+    TORCH_CHECK(input.device().is_mps(), "atomic_smoke expects an MPS tensor");
+    TORCH_CHECK(input.scalar_type() == at::kFloat,
+                "atomic_smoke expects a float32 tensor");
+    auto x = input.contiguous();
+    // Accumulators must be pre-zeroed (the kernel only adds). at::zeros is an
+    // ATen MPS op -> must stay OUTSIDE dispatch_sync (deadlock rule).
+    auto out = at::zeros({4}, x.options());
+    uint32_t n = static_cast<uint32_t>(x.numel());
+    if (n == 0) return out;
+
+    id<MTLCommandBuffer> cmd_buf = torch::mps::get_command_buffer();
+    dispatch_queue_t q = torch::mps::get_dispatch_queue();
+    dispatch_sync(q, ^{
+        @autoreleasepool {
+            id<MTLComputeCommandEncoder> enc = [cmd_buf computeCommandEncoder];
+            id<MTLComputePipelineState> pso = pipeline_for("atomic_smoke");
             [enc setComputePipelineState:pso];
             [enc setBuffer:getMTLBufferStorage(x)
                     offset:x.storage_offset() * x.element_size() atIndex:0];
@@ -309,6 +355,7 @@ at::Tensor deform_conv2d_forward(
 
 TORCH_LIBRARY(deform_conv2d_mps, m) {
     m.def("add_one(Tensor input) -> Tensor");
+    m.def("atomic_smoke(Tensor input) -> Tensor");
     m.def(
         "deform_conv2d_forward(Tensor input, Tensor weight, Tensor offset, "
         "Tensor mask, Tensor? bias, int stride_h, int stride_w, int pad_h, "
@@ -318,6 +365,7 @@ TORCH_LIBRARY(deform_conv2d_mps, m) {
 
 TORCH_LIBRARY_IMPL(deform_conv2d_mps, MPS, m) {
     m.impl("add_one", TORCH_FN(add_one));
+    m.impl("atomic_smoke", TORCH_FN(atomic_smoke));
     m.impl("deform_conv2d_forward", TORCH_FN(deform_conv2d_forward));
 }
 

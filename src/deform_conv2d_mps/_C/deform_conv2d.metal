@@ -31,6 +31,23 @@ kernel void add_one(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3, Step 1: atomic smoke kernel. Proves the compiled language version
+// (MSL >= 3.0) accepts `device atomic_float*` + atomic_fetch_add_explicit —
+// the exact primitive deformable_col2im's scatter-add relies on. A language-
+// version bump alone can "pass" while atomics still fail, so this must
+// compile AND run. Every thread adds in[gid] into out[gid % 4].
+// ---------------------------------------------------------------------------
+kernel void atomic_smoke(
+        const device float*  in   [[buffer(0)]],
+        device atomic_float* out  [[buffer(1)]],  // 4 accumulator slots, pre-zeroed
+        constant uint&       n    [[buffer(2)]],
+        uint                 gid  [[thread_position_in_grid]]) {
+    if (gid < n) {
+        atomic_fetch_add_explicit(&out[gid % 4], in[gid], memory_order_relaxed);
+    }
+}
+
 // Parameter block shared by the deform kernels. Keep field order in sync with
 // the struct defined host-side in the .mm file.
 struct DeformConvParams {
@@ -117,11 +134,10 @@ kernel void deformable_im2col(
 // TODO(Phase 3): port from torchvision deformable_col2im_kernel. Use
 //   atomic_fetch_add_explicit on `device atomic_float*` for the four corners.
 // ---------------------------------------------------------------------------
-// NOTE(Phase 3): grad_im must become `device atomic<float>*` for the scatter-
-// add. The `atomic<T>` template needs Metal >= 3.0, so set
-// `opts.languageVersion = MTLLanguageVersion3_0` in the .mm before compiling,
-// and add `#include <metal_atomic>` usage here. Kept as `device float*` for now
-// so the scaffold compiles on the default language version.
+// NOTE(Phase 3): grad_im must become `device atomic_float*` for the scatter-
+// add. The language version is now MTLLanguageVersion3_0 (set in the .mm,
+// Step 1) and `atomic_smoke` above proves atomics compile + run; the signature
+// flips when this stub is replaced in Step 2.
 kernel void deformable_col2im(
         const device float*  data_col     [[buffer(0)]],
         const device float*  data_offset  [[buffer(1)]],

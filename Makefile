@@ -89,6 +89,10 @@ examples:  ## Run the example scripts
 diag:  ## Phase-1 diagnostics: im2col isolation ladder (tests/diag_im2col.py)
 	$(PYTHON) tests/diag_im2col.py
 
+.PHONY: diag-backward
+diag-backward:  ## Phase-3 diagnostics: backward/col2im isolation ladder (tests/diag_col2im.py)
+	$(PYTHON) tests/diag_col2im.py
+
 .PHONY: smoke
 smoke:  ## Quick import + version sanity check
 	$(PYTHON) -c "import torch, deform_conv2d_mps as d; \
