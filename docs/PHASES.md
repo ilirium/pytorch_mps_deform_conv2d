@@ -29,15 +29,18 @@ Done:
 
 Scope note: `groups == 1` enforced; `deformable_groups ≥ 1` wired but only dg=1 is exercised so far (Phase 5 widens coverage).
 
-## Phase 2 — Forward correctness ⬜ Not started
+## Phase 2 — Forward correctness ✅ Done (2026-07-05)
 
-**Goal:** MPS forward matches `torchvision.ops.deform_conv2d` (CPU reference).
+**Goal:** MPS forward matches `torchvision.ops.deform_conv2d` (CPU reference). See [PHASE2_PLAN.md](PHASE2_PLAN.md) for the plan this followed.
 
-- `tests/test_forward.py` exists but currently exercises the fallback.
-- Run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` (or `make test-native`) — Phase 1 has landed.
-- Cover: kernel sizes, stride, padding, dilation, with/without mask (DCNv1 + v2). fp32 tolerances.
-- Expected pain: index/stride bugs in the im2col port — the known main time sink.
-- Exit criterion: tests pass → flip `_NATIVE_READY = True` in `ops.py` (forward-only; backward still falls back).
+Done:
+
+- `make test-forward-native` target added (the plain `test-forward` compares torchvision to itself; the log header must show `DCN_MPS_FORCE_NATIVE=1`).
+- 48-case matrix (3 kernels × 2 strides × 2 pads × 2 dilations × mask on/off) passed natively on the first run — no kernel fixes needed; the expected im2col index bugs never materialised.
+- Coverage widened with hand-picked extras (all passing, rtol/atol=1e-4): non-square 8×11 input with asymmetric stride/pad/dilation and 1×3 kernel (h/w-swap traps), bias=None, N=1 + odd channels (inC=3/outC=5), offsets ×8 (out-of-bounds bilinear zero region), 2×8×33×35 s=2 grid/threadgroup smoke case. dg=2 kept as a skipped placeholder (Phase 5).
+- `_NATIVE_READY` split into `_FORWARD_READY = True` / `_BACKWARD_READY = False` with autograd-safe routing: native only when no input requires grad (or grad mode off); training falls back until Phase 3/4.
+- Regression finding: `torchvision::_deform_conv2d_backward` has no MPS kernel — the fallback backward needs `PYTORCH_ENABLE_MPS_FALLBACK=1`, now set in `tests/conftest.py` (was shell-env dependent before).
+- Logs: `Implementing_Phase2_001…004` (final green: `_004_good.txt` — 66 passed + 1 skipped full suite, 60 + 1 forward-native).
 
 ## Phase 3 — Native backward ⬜ Not started
 
@@ -56,7 +59,7 @@ Scope note: `groups == 1` enforced; `deformable_groups ≥ 1` wired but only dg=
 - `tests/test_backward.py` exists; run natively with `DCN_MPS_FORCE_NATIVE=1`.
 - Compare each grad against torchvision CPU reference; gradcheck against CPU fp32 (MPS has no fp64 — pick tolerances accordingly).
 - Confirm a small training loop converges.
-- Exit criterion: all tests pass → `_NATIVE_READY = True` for the full path.
+- Exit criterion: all tests pass → flip `_BACKWARD_READY = True` in `ops.py` (native becomes the default for training too).
 
 ## Phase 5 — Packaging & performance ⬜ Not started
 
