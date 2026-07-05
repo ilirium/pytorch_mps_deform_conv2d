@@ -23,7 +23,10 @@ if platform.system() == "Darwin":
             sources=["src/deform_conv2d_mps/_C/deform_conv2d_mps.mm"],
             extra_compile_args={
                 "cxx": [
-                    "-std=c++17",
+                    # torch >= 2.14 headers use C++20 features (bit-field
+                    # default member initializers); c++17 builds fine but
+                    # spews -Wc++20-extensions warnings from torch includes.
+                    "-std=c++20",
                     "-ObjC++",
                     "-fobjc-arc",
                     # MPS APIs require macOS 13+; also silences availability warnings

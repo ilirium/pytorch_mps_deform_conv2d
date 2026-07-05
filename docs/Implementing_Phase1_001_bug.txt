@@ -1,0 +1,166 @@
+% make build
+python3 setup.py build_ext --inplace
+running build_ext
+building 'deform_conv2d_mps._C_ext' extension
+creating /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C
+[1/1] c++ -MMD -MF /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o.d -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -I/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include -I/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include -I/Users/ilirium/Dev/mambaforge/envs/ptn/include/python3.14 -c -c /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/src/deform_conv2d_mps/_C/deform_conv2d_mps.mm -o /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o -std=c++17 -ObjC++ -fobjc-arc -mmacosx-version-min=13.0 -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=_C_ext
+In file included from /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/src/deform_conv2d_mps/_C/deform_conv2d_mps.mm:12:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/extension.h:6:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/all.h:8:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/variable.h:7:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/cpp_hook.h:3:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/function_hook.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/TensorBody.h:21:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:9:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/InferenceMode.h:4:
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:84:23: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   84 |   bool grad_mode_ : 1 = true;
+      |                       ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:85:28: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   85 |   bool inference_mode_ : 1 = false;
+      |                            ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:86:26: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   86 |   bool fw_grad_mode_ : 1 = true;
+      |                          ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:87:36: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   87 |   bool multithreading_enabled_ : 1 = true;
+      |                                    ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:88:33: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   88 |   bool view_replay_enabled_ : 1 = false;
+      |                                 ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/AutogradState.h:89:45: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+   89 |   bool grad_layout_enforcement_enabled_ : 1 = true;
+      |                                             ^
+In file included from /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/src/deform_conv2d_mps/_C/deform_conv2d_mps.mm:12:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/extension.h:6:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/all.h:8:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/variable.h:7:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/cpp_hook.h:3:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/function_hook.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/TensorBody.h:21:
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2939:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2939 |   bool is_contiguous_ : 1 = true;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2942:41: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2942 |   bool storage_access_should_throw_ : 1 = false;
+      |                                         ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2948:30: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2948 |   bool is_channels_last_ : 1 = false;
+      |                              ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2952:41: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2952 |   bool is_channels_last_contiguous_ : 1 = false;
+      |                                         ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2958:33: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2958 |   bool is_channels_last_3d_ : 1 = false;
+      |                                 ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2962:44: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2962 |   bool is_channels_last_3d_contiguous_ : 1 = false;
+      |                                            ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2967:42: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2967 |   bool is_non_overlapping_and_dense_ : 1 = true;
+      |                                          ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2969:31: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2969 |   bool is_wrapped_number_ : 1 = false;
+      |                               ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2986:42: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2986 |   bool allow_tensor_metadata_change_ : 1 = true;
+      |                                          ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2992:22: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2992 |   bool reserved_ : 1 = false;
+      |                      ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:2998:37: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 2998 |   uint8_t sizes_strides_policy_ : 2 =
+      |                                     ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3002:40: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3002 |   bool has_symbolic_sizes_strides_ : 1 = false;
+      |                                        ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3006:37: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3006 |   uint8_t custom_sizes_strides_ : 2 =
+      |                                     ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3010:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3010 |   bool device_policy_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3011:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3011 |   bool layout_policy_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3014:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3014 |   bool custom_device_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3017:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3017 |   bool custom_layout_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3021:44: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3021 |   uint8_t python_custom_sizes_strides_ : 2 =
+      |                                            ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3025:34: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3025 |   bool python_custom_device_ : 1 = false;
+      |                                  ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorImpl.h:3028:34: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+ 3028 |   bool python_custom_layout_ : 1 = false;
+      |                                  ^
+In file included from /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/src/deform_conv2d_mps/_C/deform_conv2d_mps.mm:12:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/extension.h:6:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/all.h:8:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/api/include/torch/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/autograd.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/variable.h:7:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/cpp_hook.h:3:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/torch/csrc/autograd/function_hook.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/Tensor.h:4:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/TensorBody.h:33:
+In file included from /Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/ATen/core/CheckMemoryFormat.h:2:
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:549:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  549 |   bool requires_grad_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:550:27: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  550 |   bool pinned_memory_ : 1 = false;
+      |                           ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:552:24: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  552 |   bool has_device_ : 1 = false;
+      |                        ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:553:23: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  553 |   bool has_dtype_ : 1 = false;
+      |                       ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:554:24: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  554 |   bool has_layout_ : 1 = false;
+      |                        ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:555:31: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  555 |   bool has_requires_grad_ : 1 = false;
+      |                               ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:556:31: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  556 |   bool has_pinned_memory_ : 1 = false;
+      |                               ^
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/include/c10/core/TensorOptions.h:557:31: warning: default member initializer for bit-field is a C++20 extension [-Wc++20-extensions]
+  557 |   bool has_memory_format_ : 1 = false;
+      |                               ^
+34 warnings generated.
+creating build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps
+clang++ -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -bundle -undefined dynamic_lookup -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/lib -lc10 -ltorch -ltorch_cpu -ltorch_python -o build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -mmacosx-version-min=13.0 -framework Metal -framework Foundation
+ld: warning: duplicate -rpath '/Users/ilirium/Dev/mambaforge/envs/ptn/lib' ignored
+copying build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -> src/deform_conv2d_mps
+
+================================ RESOLUTION (2026-07-05) ================================
+Not a build failure — the extension compiled, linked, and was copied in place
+(last line above). The output contains only warnings:
+
+1. 34x "-Wc++20-extensions": all from torch's OWN headers (AutogradState.h,
+   TensorImpl.h, TensorOptions.h), which use C++20 bit-field default member
+   initializers (`bool x : 1 = true;`) while we compiled with -std=c++17.
+   torch >= 2.14 headers assume C++20.
+   Fix: setup.py now passes -std=c++20 instead of -std=c++17.
+
+2. "ld: warning: duplicate -rpath ... ignored": conda's LDFLAGS and torch's
+   BuildExtension both add the env lib rpath. Harmless; not ours to fix.
+
+Verification: `make build` again (should be warning-free apart from the rpath
+note), then `python tests/diag_im2col.py`.
+=========================================================================================
