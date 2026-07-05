@@ -61,6 +61,10 @@ test-native:  ## Run tests forcing the native MPS kernel path
 test-forward:  ## Forward correctness vs torchvision reference
 	$(PYTEST) -q tests/test_forward.py
 
+.PHONY: test-forward-native
+test-forward-native:  ## Forward tests forcing the native MPS kernel (Phase 2)
+	$(NATIVE_ENV) $(PYTEST) -q tests/test_forward.py
+
 .PHONY: test-backward
 test-backward:  ## Backward + gradcheck
 	$(PYTEST) -q tests/test_backward.py
