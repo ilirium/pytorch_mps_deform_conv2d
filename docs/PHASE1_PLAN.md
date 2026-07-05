@@ -1,5 +1,11 @@
 # Phase 1 Implementation Plan — Native Forward
 
+> **✅ COMPLETED 2026-07-05.** All steps implemented; `make diag` passes all 6
+> stages on-device (`Implementing_Phase1_003_good.txt`). One deviation from
+> Step 3's pseudocode: the ATen GEMM runs *outside* `dispatch_sync` (same-queue
+> deadlock otherwise); im2col is encoded+committed per batch iteration instead.
+> Kept for reference; see PHASES.md / STATUS.md for current state.
+
 **Goal:** replace the `TORCH_CHECK(false)` stub in `deform_conv2d_forward` (`src/deform_conv2d_mps/_C/deform_conv2d_mps.mm`) with a working native path: deformable im2col (Metal) → GEMM (ATen `mm`) → bias.
 
 **Scope:** `groups == deformable_groups == 1`, fp32, contiguous NCHW — matching the existing kernel's reference case. Wider support is Phase 5.

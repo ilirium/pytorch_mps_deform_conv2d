@@ -2,14 +2,14 @@
 
 **Last updated:** 2026-07-05
 
-**Overall:** Phase 0 done, Phase 1 code-complete (host wiring + diagnostics written; NOT yet built or run on-device). Package is usable now via the torchvision fallback.
+**Overall:** Phases 0–1 done — the native forward path works and passes the full `make diag` isolation ladder on-device (2026-07-05, see `Implementing_Phase1_003_good.txt`). Next: Phase 2 (forward test suite). The public API still routes through the torchvision fallback until Phase 2 passes (`_NATIVE_READY = False`).
 
 ## Phase overview
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Scaffold & Metal pipeline check (`add_one`) | ✅ Done |
-| 1 | Native forward (`im2col` → matmul → bias) | 🟡 Code-complete, unverified (needs on-device build + `tests/diag_im2col.py`) |
+| 1 | Native forward (`im2col` → matmul → bias) | ✅ Done (all 6 `make diag` stages pass on-device) |
 | 2 | Forward correctness tests vs torchvision | ⬜ Not started (tests written, run on fallback) |
 | 3 | Native backward (`col2im`, `col2im_coord`) | ⬜ Not started (stubs) |
 | 4 | Backward tests + gradcheck | ⬜ Not started |
@@ -20,11 +20,11 @@
 - Build system (`setup.py` + Makefile), packaging, repo layout — complete.
 - Metal pipeline validated end to end: `add_one` kernel compiles, dispatches through `torch::mps`, registers under the MPS dispatch key.
 - Python API (`deform_conv2d`, `DeformConv2d`) complete and torchvision-compatible; routes to the torchvision fallback (`_NATIVE_READY = False`).
-- `deformable_im2col` Metal kernel written (single-group reference port, untested).
+- **Native forward verified on-device**: `deformable_im2col` + host wiring pass the full diagnostic ladder (`make diag`) — unfold parity, constant/random offsets, mask, and full pipeline (N=2, bias) vs torchvision CPU, all within rtol=1e-4/atol=1e-5.
 
 ## What's missing
 
-- On-device verification of the new forward wiring (written on a non-Mac machine; never compiled or run). Run `make build`, then `python tests/diag_im2col.py`.
+- Phase 2 run: `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` (broader shape/param coverage than the diag ladder).
 - `deformable_col2im` and `deformable_col2im_coord` kernels are empty stubs.
 - `_DeformConv2dFunction.backward()` raises `NotImplementedError`.
 - `_NATIVE_READY` still `False` in `ops.py` — flip only after Phase 2 passes.
@@ -39,9 +39,8 @@
 
 ## Next actions
 
-1. On a Mac: `make build`, then `python tests/diag_im2col.py` — fix index-math bugs it flags. (Phase 1 exit)
-2. Run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` against the torchvision CPU reference. (Phase 2)
-3. Port the two backward kernels; requires `atomic<float>` → set `MTLLanguageVersion3_0` in compile options. (Phase 3)
+1. Run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py` (or `make test-native`) against the torchvision CPU reference; flip `_NATIVE_READY = True` (forward-only) when green. (Phase 2)
+2. Port the two backward kernels; requires `atomic<float>` → set `MTLLanguageVersion3_0` in compile options. (Phase 3)
 
 ## Environment / constraints
 
