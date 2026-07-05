@@ -1,10 +1,12 @@
 """Functional op: deform_conv2d, API-compatible with torchvision.ops.deform_conv2d.
 
 Behaviour:
-  * On MPS, once the native forward/backward are implemented, route through the
-    custom op + autograd.Function below.
-  * Until the native path is complete (scaffold state), or on non-MPS devices,
-    fall back to ``torchvision.ops.deform_conv2d`` so the package is usable now.
+  * On MPS, inference (no grad required) runs the native Metal forward
+    (Phase 2: verified against the torchvision CPU reference).
+  * Training on MPS (any input requires grad) still falls back to
+    ``torchvision.ops.deform_conv2d`` until the native backward lands
+    (Phase 3/4).
+  * Non-MPS devices always use the torchvision fallback.
 """
 
 from __future__ import annotations
@@ -16,10 +18,13 @@ from typing import Optional, Tuple
 import torch
 from torch import Tensor
 
-# Set DCN_MPS_FORCE_NATIVE=1 to bypass the fallback and exercise the native path.
+# Set DCN_MPS_FORCE_NATIVE=1 to bypass ALL readiness gating and exercise the
+# native path unconditionally (testing/diagnostics; grad-requiring calls will
+# hit the NotImplementedError in backward until Phase 3).
 _FORCE_NATIVE = os.environ.get("DCN_MPS_FORCE_NATIVE", "0") == "1"
 
-_NATIVE_READY = False  # flip to True once forward + backward pass tests.
+_FORWARD_READY = True    # Phase 2 (2026-07-05): forward verified on-device.
+_BACKWARD_READY = False  # flip once Phase 3/4 backward passes gradcheck.
 _ext = None
 
 
@@ -112,7 +117,14 @@ def deform_conv2d(
     padding = _pair(padding)
     dilation = _pair(dilation)
 
-    use_native = input.device.type == "mps" and (_NATIVE_READY or _FORCE_NATIVE)
+    # Route native only when autograd won't be needed (backward is Phase 3);
+    # _FORCE_NATIVE bypasses the gating entirely for testing.
+    needs_grad = torch.is_grad_enabled() and any(
+        t is not None and t.requires_grad
+        for t in (input, weight, offset, mask, bias))
+    use_native = input.device.type == "mps" and (
+        _FORCE_NATIVE
+        or (_FORWARD_READY and (not needs_grad or _BACKWARD_READY)))
     if use_native:
         kh, kw = weight.shape[-2], weight.shape[-1]
         groups = 1  # extend when groups support lands

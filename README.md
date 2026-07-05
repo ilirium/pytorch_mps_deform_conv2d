@@ -13,12 +13,12 @@ torchvision ships CPU + CUDA kernels for `deform_conv2d` but **not MPS**
 forces slow `.cpu()` round-trips. This package provides the missing kernel,
 **API-compatible with `torchvision.ops.deform_conv2d`** (DCNv1 and DCNv2).
 
-> **Status: scaffold.** The project structure, build, Python API, the Phase-0
-> Metal pipeline check, and tests are in place. The deformable Metal kernels are
-> partially implemented (forward `im2col` is a reference draft; `col2im` /
-> `col2im_coord` are stubs). Until the native path passes its tests, the Python
-> layer transparently falls back to the torchvision reference, so the package is
-> already usable. See `IMPLEMENTATION_PLAN.md` for the full roadmap.
+> **Status: native forward (inference) live.** On MPS, inference runs the
+> native Metal forward, verified against the torchvision CPU reference
+> (Phase 2, 2026-07-05). Training (anything requiring grad) transparently
+> falls back to the torchvision reference until the native backward lands
+> (Phase 3/4; `col2im` / `col2im_coord` are stubs). Non-MPS devices always
+> use the fallback. See `IMPLEMENTATION_PLAN.md` for the full roadmap.
 
 ## PyTorch and Torchvision version
 
@@ -84,19 +84,22 @@ IMPLEMENTATION_PLAN.md     phased roadmap and design rationale
 ## Development
 
 ```bash
-pytest -q                          # forward/module tests run on the fallback now
-DCN_MPS_FORCE_NATIVE=1 pytest -q   # exercise the native path once Phase 1 lands
+pytest -q                          # full suite (backward/module use the fallback)
+make test-forward-native           # forward tests forced onto the native kernel
+DCN_MPS_FORCE_NATIVE=1 pytest -q   # force native everywhere (backward will raise)
 python benchmarks/bench.py
 ```
 
-To enable the native path after implementing forward, set `_NATIVE_READY = True`
-in `src/deform_conv2d_mps/ops.py`.
+Native routing is gated by `_FORWARD_READY` / `_BACKWARD_READY` in
+`src/deform_conv2d_mps/ops.py`: inference on MPS is native; grad-requiring
+calls fall back until `_BACKWARD_READY` flips (Phase 3/4).
+`DCN_MPS_FORCE_NATIVE=1` bypasses the gating for testing.
 
 ### Roadmap (see IMPLEMENTATION_PLAN.md)
 
-- **Phase 0** — Metal pipeline check (`add_one`). ✅ scaffolded
-- **Phase 1** — native forward (`im2col` → matmul → bias)
-- **Phase 2** — forward tests vs torchvision
+- **Phase 0** — Metal pipeline check (`add_one`). ✅
+- **Phase 1** — native forward (`im2col` → matmul → bias). ✅
+- **Phase 2** — forward tests vs torchvision. ✅
 - **Phase 3** — native backward (`col2im`, `col2im_coord`)
 - **Phase 4** — backward tests + gradcheck
 - **Phase 5** — packaging, perf tuning, groups / half precision
