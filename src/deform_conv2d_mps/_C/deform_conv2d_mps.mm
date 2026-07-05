@@ -353,9 +353,144 @@ at::Tensor deform_conv2d_forward(
     return output;
 }
 
+// ---------------------------------------------------------------------------
+// Backward building block: deformable_col2im for ONE image (Phase 3, Step 2).
+//
+// columns: (C*kh*kw, out_h*out_w) column-buffer gradient (already multiplied
+//          by weight^T on the Python/ATen side); offset: (2*dg*kh*kw, oh, ow);
+//          mask: (dg*kh*kw, oh, ow) or empty. Returns grad_input (C, H, W).
+//
+// Exposed as its own op so the diag ladder can test the scatter kernel in
+// isolation; the fused deform_conv2d_backward (Step 4) reuses it per batch
+// element via tensor slices (select(0, n) keeps storage_offset views, which
+// the buffer bindings honour).
+// ---------------------------------------------------------------------------
+at::Tensor deformable_col2im(
+        const at::Tensor& columns,
+        const at::Tensor& offset,
+        const at::Tensor& mask,
+        int64_t height, int64_t width,
+        int64_t kernel_h, int64_t kernel_w,
+        int64_t stride_h, int64_t stride_w,
+        int64_t pad_h, int64_t pad_w,
+        int64_t dilation_h, int64_t dilation_w,
+        int64_t deformable_groups) {
+    TORCH_CHECK(columns.device().is_mps() && offset.device().is_mps(),
+                "deformable_col2im: columns and offset must be MPS tensors");
+    TORCH_CHECK(columns.scalar_type() == at::kFloat &&
+                offset.scalar_type() == at::kFloat,
+                "deformable_col2im: only float32 is supported");
+    TORCH_CHECK(columns.dim() == 2, "columns must be 2-D (C*kh*kw, oh*ow)");
+    TORCH_CHECK(offset.dim() == 3, "offset must be 3-D (2*dg*kh*kw, oh, ow)");
+    TORCH_CHECK(kernel_h > 0 && kernel_w > 0, "kernel dims must be positive");
+    TORCH_CHECK(stride_h > 0 && stride_w > 0, "stride must be positive");
+    TORCH_CHECK(dilation_h > 0 && dilation_w > 0, "dilation must be positive");
+
+    auto col = columns.contiguous();
+    auto off = offset.contiguous();
+
+    const int64_t kk = kernel_h * kernel_w;
+    TORCH_CHECK(col.size(0) % kk == 0,
+                "columns rows (", col.size(0), ") not divisible by kh*kw (", kk, ")");
+    const int64_t C = col.size(0) / kk;
+
+    const int64_t out_h =
+        (height + 2 * pad_h - dilation_h * (kernel_h - 1) - 1) / stride_h + 1;
+    const int64_t out_w =
+        (width + 2 * pad_w - dilation_w * (kernel_w - 1) - 1) / stride_w + 1;
+    TORCH_CHECK(col.size(1) == out_h * out_w,
+                "columns cols (", col.size(1), ") != out_h*out_w (", out_h * out_w, ")");
+
+    const int64_t dg = deformable_groups;
+    TORCH_CHECK(dg > 0, "deformable_groups must be positive, got ", dg);
+    TORCH_CHECK(C % dg == 0, "channels (", C,
+                ") not divisible by deformable_groups (", dg, ")");
+    TORCH_CHECK(off.size(0) == 2 * dg * kk && off.size(1) == out_h &&
+                off.size(2) == out_w,
+                "offset shape mismatch: expected (", 2 * dg * kk, ", ", out_h,
+                ", ", out_w, "), got ", off.sizes());
+
+    const bool use_mask = mask.defined() && mask.numel() > 0;
+    at::Tensor msk;
+    if (use_mask) {
+        TORCH_CHECK(mask.device().is_mps() && mask.scalar_type() == at::kFloat,
+                    "mask must be a float32 MPS tensor");
+        msk = mask.contiguous();
+        TORCH_CHECK(msk.dim() == 3 && msk.size(0) == dg * kk &&
+                    msk.size(1) == out_h && msk.size(2) == out_w,
+                    "mask shape mismatch: expected (", dg * kk, ", ", out_h,
+                    ", ", out_w, "), got ", msk.sizes());
+    }
+
+    // The kernel accumulates -> must start from zeros. ATen op: stays OUTSIDE
+    // dispatch_sync (deadlock rule).
+    auto grad_im = at::zeros({C, height, width}, col.options());
+
+    const int64_t total = C * kk * out_h * out_w;  // one thread per col element
+    if (total == 0 || grad_im.numel() == 0) return grad_im;
+
+    DeformConvParams params;
+    params.batch = 1;
+    params.channels = static_cast<int>(C);
+    params.height = static_cast<int>(height);
+    params.width = static_cast<int>(width);
+    params.kernel_h = static_cast<int>(kernel_h);
+    params.kernel_w = static_cast<int>(kernel_w);
+    params.pad_h = static_cast<int>(pad_h);
+    params.pad_w = static_cast<int>(pad_w);
+    params.stride_h = static_cast<int>(stride_h);
+    params.stride_w = static_cast<int>(stride_w);
+    params.dilation_h = static_cast<int>(dilation_h);
+    params.dilation_w = static_cast<int>(dilation_w);
+    params.out_h = static_cast<int>(out_h);
+    params.out_w = static_cast<int>(out_w);
+    params.deformable_groups = static_cast<int>(dg);
+    params.channels_per_deformable_group = static_cast<int>(C / dg);
+    params.use_mask = use_mask ? 1 : 0;
+
+    id<MTLCommandBuffer> cmd_buf = torch::mps::get_command_buffer();
+    TORCH_CHECK(cmd_buf != nil, "Could not obtain an MPS command buffer");
+    dispatch_queue_t q = torch::mps::get_dispatch_queue();
+    dispatch_sync(q, ^{
+        @autoreleasepool {
+            id<MTLComputeCommandEncoder> enc = [cmd_buf computeCommandEncoder];
+            id<MTLComputePipelineState> pso = pipeline_for("deformable_col2im");
+            [enc setComputePipelineState:pso];
+            [enc setBuffer:getMTLBufferStorage(col)
+                    offset:col.storage_offset() * col.element_size() atIndex:0];
+            [enc setBuffer:getMTLBufferStorage(off)
+                    offset:off.storage_offset() * off.element_size() atIndex:1];
+            if (use_mask) {
+                [enc setBuffer:getMTLBufferStorage(msk)
+                        offset:msk.storage_offset() * msk.element_size() atIndex:2];
+            } else {
+                // Placeholder so index 2 is always bound; never read (use_mask=0).
+                [enc setBuffer:getMTLBufferStorage(off)
+                        offset:off.storage_offset() * off.element_size() atIndex:2];
+            }
+            [enc setBuffer:getMTLBufferStorage(grad_im)
+                    offset:grad_im.storage_offset() * grad_im.element_size() atIndex:3];
+            [enc setBytes:&params length:sizeof(params) atIndex:4];
+
+            NSUInteger tg = MIN((NSUInteger)pso.maxTotalThreadsPerThreadgroup,
+                                (NSUInteger)total);
+            [enc dispatchThreads:MTLSizeMake((NSUInteger)total, 1, 1)
+              threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+            [enc endEncoding];
+            torch::mps::commit();
+        }
+    });
+    return grad_im;
+}
+
 TORCH_LIBRARY(deform_conv2d_mps, m) {
     m.def("add_one(Tensor input) -> Tensor");
     m.def("atomic_smoke(Tensor input) -> Tensor");
+    m.def(
+        "deformable_col2im(Tensor columns, Tensor offset, Tensor mask, "
+        "int height, int width, int kernel_h, int kernel_w, int stride_h, "
+        "int stride_w, int pad_h, int pad_w, int dilation_h, int dilation_w, "
+        "int deformable_groups) -> Tensor");
     m.def(
         "deform_conv2d_forward(Tensor input, Tensor weight, Tensor offset, "
         "Tensor mask, Tensor? bias, int stride_h, int stride_w, int pad_h, "
@@ -366,6 +501,7 @@ TORCH_LIBRARY(deform_conv2d_mps, m) {
 TORCH_LIBRARY_IMPL(deform_conv2d_mps, MPS, m) {
     m.impl("add_one", TORCH_FN(add_one));
     m.impl("atomic_smoke", TORCH_FN(atomic_smoke));
+    m.impl("deformable_col2im", TORCH_FN(deformable_col2im));
     m.impl("deform_conv2d_forward", TORCH_FN(deform_conv2d_forward));
 }
 

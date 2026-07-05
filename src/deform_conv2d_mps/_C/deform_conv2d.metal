@@ -2,7 +2,7 @@
 //
 // THREE kernels are needed (everything else reuses torch ops):
 //   1. deformable_im2col        (forward gather)        -- IMPLEMENTED (single-group reference)
-//   2. deformable_col2im        (backward -> grad input)   -- STUB
+//   2. deformable_col2im        (backward -> grad input)   -- IMPLEMENTED (Phase 3, Step 2)
 //   3. deformable_col2im_coord  (backward -> grad offset/mask) -- STUB
 //
 // Plus `add_one` — a trivial Phase-0 kernel to validate the .mm -> Metal ->
@@ -125,29 +125,82 @@ kernel void deformable_im2col(
 }
 
 // ---------------------------------------------------------------------------
-// 2. deformable_col2im  (BACKWARD -> grad_input)  -- STUB
+// 2. deformable_col2im  (BACKWARD -> grad_input)
 //
 // Scatter the column gradient back into grad_input using the same bilinear
-// weights as the forward gather. Requires atomic float adds because multiple
-// (k, oy, ox) taps can land on the same input pixel.
+// weights as the forward gather. One thread per column element; the sampling
+// location (h_im, w_im) is recomputed with EXACTLY the forward's index math
+// (offset interleaving `2*(dgi*kh*kw + k)` / `+1`), then the gradient is
+// atomically added into the up-to-4 corners the forward read from.
+// Atomics are required: multiple (k, oy, ox) taps can land on the same input
+// pixel. grad_im must be pre-zeroed by the host (the kernel only accumulates).
 //
-// TODO(Phase 3): port from torchvision deformable_col2im_kernel. Use
-//   atomic_fetch_add_explicit on `device atomic_float*` for the four corners.
+// Ported from torchvision deformable_col2im_kernel (batch handled by the
+// host loop, so the reference's `b` index is absent from the decomposition).
 // ---------------------------------------------------------------------------
-// NOTE(Phase 3): grad_im must become `device atomic_float*` for the scatter-
-// add. The language version is now MTLLanguageVersion3_0 (set in the .mm,
-// Step 1) and `atomic_smoke` above proves atomics compile + run; the signature
-// flips when this stub is replaced in Step 2.
 kernel void deformable_col2im(
-        const device float*  data_col     [[buffer(0)]],
-        const device float*  data_offset  [[buffer(1)]],
-        const device float*  data_mask    [[buffer(2)]],
-        device float*        grad_im      [[buffer(3)]],
+        const device float*  data_col     [[buffer(0)]],  // (C*kh*kw, out_h*out_w)
+        const device float*  data_offset  [[buffer(1)]],  // (2*dg*kh*kw, out_h, out_w)
+        const device float*  data_mask    [[buffer(2)]],  // (dg*kh*kw, out_h, out_w) or unused
+        device atomic_float* grad_im      [[buffer(3)]],  // (C, H, W), pre-zeroed
         constant DeformConvParams& p      [[buffer(4)]],
         uint gid                          [[thread_position_in_grid]]) {
-    // STUB — see TODO above.
-    (void)data_col; (void)data_offset; (void)data_mask;
-    (void)grad_im; (void)p; (void)gid;
+
+    int out_hw = p.out_h * p.out_w;
+    int total = p.channels * p.kernel_h * p.kernel_w * out_hw;
+    if ((int)gid >= total) return;
+
+    // gid is the linear index into data_col:
+    //   ((c*kh*kw + ki*kw + kj) * out_h + oy) * out_w + ox
+    int ox = (int)gid % p.out_w;
+    int oy = ((int)gid / p.out_w) % p.out_h;
+    int kj = ((int)gid / out_hw) % p.kernel_w;
+    int ki = ((int)gid / (out_hw * p.kernel_w)) % p.kernel_h;
+    int c  = (int)gid / (out_hw * p.kernel_w * p.kernel_h);
+
+    int dg = (p.deformable_groups > 0) ? p.deformable_groups : 1;
+    int deformable_group_index = c / p.channels_per_deformable_group;
+    if (deformable_group_index >= dg) deformable_group_index = dg - 1;
+
+    int col_step = p.kernel_h * p.kernel_w;
+    int k = ki * p.kernel_w + kj;
+
+    // Same offset/mask indexing as deformable_im2col — copied, not re-derived.
+    int off_h_idx = ((2 * (deformable_group_index * col_step + k)    ) * p.out_h + oy) * p.out_w + ox;
+    int off_w_idx = ((2 * (deformable_group_index * col_step + k) + 1) * p.out_h + oy) * p.out_w + ox;
+    float off_h = data_offset[off_h_idx];
+    float off_w = data_offset[off_w_idx];
+
+    float h_im = oy * p.stride_h - p.pad_h + ki * p.dilation_h + off_h;
+    float w_im = ox * p.stride_w - p.pad_w + kj * p.dilation_w + off_w;
+
+    float top_grad = data_col[gid];
+    if (p.use_mask) {
+        int m_idx = ((deformable_group_index * col_step + k) * p.out_h + oy) * p.out_w + ox;
+        top_grad *= data_mask[m_idx];
+    }
+
+    device atomic_float* grad_plane = grad_im + c * p.height * p.width;
+
+    // Reference's window scan around the sample point: only cells with
+    // |delta| < 1 in both axes get a non-zero bilinear weight.
+    int cur_h = (int)floor(h_im);
+    int cur_w = (int)floor(w_im);
+    for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -2; dx <= 2; ++dx) {
+            int yp = cur_h + dy;
+            int xp = cur_w + dx;
+            if (yp >= 0 && yp < p.height && xp >= 0 && xp < p.width &&
+                fabs(h_im - (float)yp) < 1.0f &&
+                fabs(w_im - (float)xp) < 1.0f) {
+                float weight = get_gradient_weight(h_im, w_im, yp, xp,
+                                                   p.height, p.width);
+                atomic_fetch_add_explicit(&grad_plane[yp * p.width + xp],
+                                          weight * top_grad,
+                                          memory_order_relaxed);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

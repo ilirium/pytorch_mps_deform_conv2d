@@ -37,6 +37,37 @@ inline float bilinear_interpolate(
     return w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4;
 }
 
+// Per-corner bilinear weight for the col2im scatter: the contribution of the
+// sample at (argmax_h, argmax_w) to the integer grid cell (h, w). Mirrors the
+// CUDA reference's get_gradient_weight, including the bounds sentinel (whole
+// sample OOB -> 0) and per-corner floor/+1 matching — this is exactly the
+// weight the forward gather used, so scatter-adding `weight * grad` is the
+// transpose of bilinear_interpolate above.
+inline float get_gradient_weight(
+        float argmax_h, float argmax_w,
+        int h, int w, int height, int width) {
+    if (argmax_h <= -1 || argmax_h >= height ||
+        argmax_w <= -1 || argmax_w >= width) {
+        return 0.0f;
+    }
+
+    int argmax_h_low = (int)floor(argmax_h);
+    int argmax_w_low = (int)floor(argmax_w);
+    int argmax_h_high = argmax_h_low + 1;
+    int argmax_w_high = argmax_w_low + 1;
+
+    float weight = 0.0f;
+    if (h == argmax_h_low && w == argmax_w_low)
+        weight = (h + 1 - argmax_h) * (w + 1 - argmax_w);
+    if (h == argmax_h_low && w == argmax_w_high)
+        weight = (h + 1 - argmax_h) * (argmax_w + 1 - w);
+    if (h == argmax_h_high && w == argmax_w_low)
+        weight = (argmax_h + 1 - h) * (w + 1 - argmax_w);
+    if (h == argmax_h_high && w == argmax_w_high)
+        weight = (argmax_h + 1 - h) * (argmax_w + 1 - w);
+    return weight;
+}
+
 // Gradient weight of the bilinear sample w.r.t. the coordinate, used by
 // col2im_coord. `bp_dir == 0` -> d/dh, `bp_dir == 1` -> d/dw.
 inline float get_coordinate_weight(
