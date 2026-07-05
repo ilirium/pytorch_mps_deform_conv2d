@@ -1,0 +1,27 @@
+% make build
+python3 setup.py build_ext --inplace
+running build_ext
+building 'deform_conv2d_mps._C_ext' extension
+ninja: no work to do.
+clang++ -fno-strict-overflow -Wsign-compare -Wunreachable-code -DNDEBUG -O2 -Wall -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -fPIC -O2 -isystem /Users/ilirium/Dev/mambaforge/envs/ptn/include -arch arm64 -bundle -undefined dynamic_lookup -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib -Wl,-rpath,/Users/ilirium/Dev/mambaforge/envs/ptn/lib -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib /Users/ilirium/Library/CloudStorage/OneDrive-Personal/software-engineering/code-2026/pytorch_mps_deform_conv2d/build/temp.macosx-11.0-arm64-cpython-314/src/deform_conv2d_mps/_C/deform_conv2d_mps.o -L/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/lib -lc10 -ltorch -ltorch_cpu -ltorch_python -o build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -mmacosx-version-min=13.0 -framework Metal -framework Foundation
+ld: warning: duplicate -rpath '/Users/ilirium/Dev/mambaforge/envs/ptn/lib' ignored
+copying build/lib.macosx-11.0-arm64-cpython-314/deform_conv2d_mps/_C_ext.cpython-314-darwin.so -> src/deform_conv2d_mps
+
+
+% make smoke
+python3 -c "import torch, deform_conv2d_mps as d; \
+print('deform_conv2d_mps', d.__version__, '| torch', torch.__version__, \
+'| mps', torch.backends.mps.is_available())"
+deform_conv2d_mps 0.0.1 | torch 2.14.0.dev20260622 | mps True
+
+
+% make diag
+python3 tests/diag_im2col.py
+PASS  stage1 unfold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 unfold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 unfold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 constant offset +0.5, use_mask=0
+PASS  stage3 random offsets + mask
+PASS  stage3b full forward (N=2, bias) vs torchvision CPU
+
+All stages passed. Next: DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py (Phase 2).
