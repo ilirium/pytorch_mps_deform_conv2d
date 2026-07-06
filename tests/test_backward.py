@@ -161,10 +161,21 @@ _EXTRA_CASES = [
     # Larger spatial smoke case — grid-size/threadgroup edge effects.
     pytest.param(dict(N=2, inC=8, H=33, W=35, stride=2, pad=1),
                  id="large-spatial"),
-    # Visible gap until Phase 5.
-    pytest.param(dict(dg=2),
-                 marks=pytest.mark.skip(reason="deformable_groups>1 is Phase 5"),
-                 id="dg2"),
+    # Phase 5 Step 1: deformable_groups > 1, first on-device exercise (all
+    # three kernels index by deformable_group_index; checked off-device in
+    # Phase 3). Wrong dg indexing reads valid-but-wrong-group memory —
+    # plausible numbers, not NaN — hence cpg=2, cpg=3 (non-power-of-two),
+    # dg=C, mask on/off, and an asym combo. All five grads, Phase 4
+    # per-grad tolerances.
+    pytest.param(dict(dg=2), id="dg2"),
+    pytest.param(dict(dg=2, use_mask=False), id="dg2-v1"),
+    pytest.param(dict(dg=2, inC=6), id="dg2-cpg3"),
+    pytest.param(dict(dg=4), id="dg-eq-C"),
+    pytest.param(dict(dg=2, H=8, W=11, stride=(2, 1), pad=(0, 2), dil=(2, 1)),
+                 id="dg2-asym"),
+    # dg=2 with a non-scalar upstream grad — the offset/mask channel count
+    # scales with dg, so grad_offset/grad_mask GEMM wiring sees new shapes.
+    pytest.param(dict(dg=2, upstream="randn"), id="dg2-nonscalar-grad"),
 ]
 
 

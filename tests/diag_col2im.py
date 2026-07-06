@@ -106,7 +106,7 @@ def main():
     import torchvision.ops as tvops
 
     def grad_input_case(name, C, outC, H, W, kh, kw, stride, pad, dil,
-                        offset, mask):
+                        offset, mask, dg=1):
         oh = (H + 2 * pad[0] - dil[0] * (kh - 1) - 1) // stride[0] + 1
         ow = (W + 2 * pad[1] - dil[1] * (kw - 1) - 1) // stride[1] + 1
         inp = torch.randn(1, C, H, W, requires_grad=True)
@@ -120,7 +120,7 @@ def main():
         grad_cols = weight.view(outC, -1).t().mm(gout[0].view(outC, oh * ow))
         got = native_col2im(grad_cols, offset[0],
                             mask[0] if mask is not None else None,
-                            H, W, kh, kw, stride, pad, dil)
+                            H, W, kh, kw, stride, pad, dil, dg=dg)
         return check(name, got, want, rtol=2e-3, atol=1e-4)
 
     C, outC, H, W, kh, kw = 1, 1, 5, 5, 2, 2
@@ -140,6 +140,17 @@ def main():
     mask = torch.rand(1, kh * kw, oh, ow)
     ok &= grad_input_case("stage2b grad_input random offsets + mask",
                           C, outC, H, W, kh, kw, stride, pad, dil, offset, mask)
+
+    # 2c: dg=2 (Phase 5) — the scatter must read each channel's *own* group's
+    # offset/mask. cpg=3 (non-power-of-two) on purpose.
+    C, outC, H, W, kh, kw, dg = 6, 3, 6, 5, 3, 3, 2
+    stride, pad, dil = (1, 1), (1, 1), (1, 1)
+    oh, ow = 6, 5
+    offset = torch.randn(1, 2 * dg * kh * kw, oh, ow) * 2.0
+    mask = torch.rand(1, dg * kh * kw, oh, ow)
+    ok &= grad_input_case("stage2c grad_input dg=2 C=6 random offsets + mask",
+                          C, outC, H, W, kh, kw, stride, pad, dil, offset,
+                          mask, dg=dg)
     if not ok:
         print("\nStage 2 failed with stage 1 green -> bilinear scatter weights "
               "(get_gradient_weight) or the mask/offset indexing are wrong.")
@@ -147,13 +158,15 @@ def main():
 
     # --- Stage 3: numerical grad_offset / grad_mask ----------------------------
     # No atomics in the coord kernel -> deterministic, forward-level tolerance.
-    def coord_case(name, C, outC, H, W, kh, kw, stride, pad, dil, use_mask):
+    def coord_case(name, C, outC, H, W, kh, kw, stride, pad, dil, use_mask,
+                   dg=1):
         oh = (H + 2 * pad[0] - dil[0] * (kh - 1) - 1) // stride[0] + 1
         ow = (W + 2 * pad[1] - dil[1] * (kw - 1) - 1) // stride[1] + 1
         inp = torch.randn(1, C, H, W)
         weight = torch.randn(outC, C, kh, kw)
-        offset = (torch.randn(1, 2 * kh * kw, oh, ow) * 1.5).requires_grad_(True)
-        mask = torch.rand(1, kh * kw, oh, ow).requires_grad_(True) \
+        offset = (torch.randn(1, 2 * dg * kh * kw, oh, ow)
+                  * 1.5).requires_grad_(True)
+        mask = torch.rand(1, dg * kh * kw, oh, ow).requires_grad_(True) \
             if use_mask else None
         gout = torch.randn(1, outC, oh, ow)
 
@@ -167,7 +180,7 @@ def main():
         g_off, g_mask = _col2im_coord(
             grad_cols.to("mps"), inp[0].to("mps"),
             offset[0].detach().to("mps"), mask_arg,
-            kh, kw, stride[0], stride[1], pad[0], pad[1], dil[0], dil[1], 1)
+            kh, kw, stride[0], stride[1], pad[0], pad[1], dil[0], dil[1], dg)
 
         good = check(f"{name} grad_offset", g_off.cpu(), offset.grad[0])
         if use_mask:
@@ -182,6 +195,12 @@ def main():
                      2, 3, 6, 5, 3, 3, (1, 1), (1, 1), (1, 1), False)
     ok &= coord_case("stage3c C=3 stride/dil asym (mask)",
                      3, 2, 8, 7, 3, 2, (2, 1), (1, 0), (1, 2), True)
+    # dg=2 (Phase 5): coord grads accumulate over cpg channels *within one
+    # group* — cpg=3 (C=6) catches a sum crossing the group boundary.
+    ok &= coord_case("stage3d dg=2 C=6 (mask)",
+                     6, 3, 6, 5, 3, 3, (1, 1), (1, 1), (1, 1), True, dg=2)
+    ok &= coord_case("stage3e dg=2 C=4 no-mask",
+                     4, 3, 6, 5, 3, 3, (1, 1), (1, 1), (1, 1), False, dg=2)
     if not ok:
         print("\nStage 3 failed -> coord-grad path: check the offset/mask "
               "index interleaving first (top suspect), then "
@@ -191,14 +210,14 @@ def main():
     # --- Stage 4: full native backward smoke vs torchvision CPU ---------------
     # Calls _DeformConv2dFunction directly, which bypasses the readiness
     # gating (equivalent to DCN_MPS_FORCE_NATIVE=1). All five grads.
-    def backward_case(name, use_mask, use_bias):
-        N, C, outC, H, W, kh, kw = 2, 3, 4, 8, 8, 3, 3
+    def backward_case(name, use_mask, use_bias, dg=1, C=3):
+        N, outC, H, W, kh, kw = 2, 4, 8, 8, 3, 3
         stride, pad, dil = (1, 1), (1, 1), (1, 1)
         oh = ow = 8
         inp = torch.randn(N, C, H, W)
         weight = torch.randn(outC, C, kh, kw)
-        offset = torch.randn(N, 2 * kh * kw, oh, ow)
-        mask = torch.rand(N, kh * kw, oh, ow) if use_mask else None
+        offset = torch.randn(N, 2 * dg * kh * kw, oh, ow)
+        mask = torch.rand(N, dg * kh * kw, oh, ow) if use_mask else None
         bias = torch.randn(outC) if use_bias else None
         gout = torch.randn(N, outC, oh, ow)
 
@@ -222,7 +241,7 @@ def main():
         out_nat = ops._DeformConv2dFunction.apply(
             nat["input"], nat["weight"], nat["offset"],
             nat.get("mask"), nat.get("bias"),
-            stride, pad, dil, 1, 1)
+            stride, pad, dil, 1, dg)
         good = check(f"{name} forward parity",
                      out_nat.detach().cpu(), out_ref.detach(),
                      rtol=2e-3, atol=1e-4)
@@ -235,6 +254,9 @@ def main():
 
     ok &= backward_case("stage4 DCNv2 (mask + bias)", True, True)
     ok &= backward_case("stage4b DCNv1 (no mask, no bias)", False, False)
+    # dg=2 (Phase 5), cpg=3: all five grads through the fused backward.
+    ok &= backward_case("stage4c dg=2 C=6 DCNv2 (mask + bias)", True, True,
+                        dg=2, C=6)
     if not ok:
         print("\nStage 4 failed with stages 1-3 green -> the fused host op's "
               "batch wiring (slices/offsets/GEMMs) or ops.py grad mapping "
@@ -242,9 +264,8 @@ def main():
         sys.exit(1)
 
     if ok:
-        print("\nAll stages passed. Backward is live (Phase 4); "
-              "regression: make test-backward-native. Next: Phase 5 "
-              "(groups/dg > 1, perf, packaging).")
+        print("\nAll stages passed. Backward is live incl. dg > 1 (Phase 5); "
+              "regression: make test-backward-native.")
     sys.exit(0 if ok else 1)
 
 

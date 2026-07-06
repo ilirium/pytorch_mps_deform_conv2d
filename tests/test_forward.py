@@ -124,10 +124,18 @@ _EXTRA_CASES = [
     # Larger spatial smoke case — grid-size/threadgroup edge effects.
     pytest.param(dict(N=2, inC=8, H=33, W=35, stride=2, pad=1),
                  id="large-spatial"),
-    # Visible gap until Phase 5.
-    pytest.param(dict(dg=2),
-                 marks=pytest.mark.skip(reason="deformable_groups>1 is Phase 5"),
-                 id="dg2"),
+    # Phase 5 Step 1: deformable_groups > 1. The kernels have indexed by
+    # deformable_group_index since Phase 1, but dg > 1 first runs on-device
+    # here. Trap: a wrong dg index reads valid memory from the *wrong* group
+    # — plausible values, not NaN — so cover cpg=2, cpg=3 (non-power-of-two
+    # split), and dg=C (one channel per group), mask on and off, plus an
+    # asym stride/pad/dilation combo.
+    pytest.param(dict(dg=2), id="dg2"),
+    pytest.param(dict(dg=2, use_mask=False), id="dg2-v1"),
+    pytest.param(dict(dg=2, inC=6), id="dg2-cpg3"),
+    pytest.param(dict(dg=4), id="dg-eq-C"),
+    pytest.param(dict(dg=2, H=8, W=11, stride=(2, 1), pad=(0, 2), dil=(2, 1)),
+                 id="dg2-asym"),
 ]
 
 

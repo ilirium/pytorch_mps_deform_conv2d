@@ -60,13 +60,15 @@ def _bilinear(plane, h, w):
     return hh * hw * v1 + hh * lw * v2 + lh * hw * v3 + lh * lw * v4
 
 
-def ref_im2col(inp, offset, mask, kh, kw, stride, pad, dil):
-    """Reference deformable im2col for a single image, dg == 1.
+def ref_im2col(inp, offset, mask, kh, kw, stride, pad, dil, dg=1):
+    """Reference deformable im2col for a single image.
 
-    inp: (C, H, W); offset: (2*kh*kw, oh, ow); mask: (kh*kw, oh, ow) or None.
-    Returns (C*kh*kw, oh*ow).
+    inp: (C, H, W); offset: (2*dg*kh*kw, oh, ow); mask: (dg*kh*kw, oh, ow)
+    or None. Channel c belongs to deformable group c // (C // dg) and reads
+    that group's offset/mask slice. Returns (C*kh*kw, oh*ow).
     """
     C, H, W = inp.shape
+    cpg = C // dg
     sh, sw = stride
     ph, pw = pad
     dh, dw = dil
@@ -78,12 +80,15 @@ def ref_im2col(inp, offset, mask, kh, kw, stride, pad, dil):
             for ki in range(kh):
                 for kj in range(kw):
                     k = ki * kw + kj
-                    off_h = offset[2 * k, oy, ox].item()
-                    off_w = offset[2 * k + 1, oy, ox].item()
-                    h = oy * sh - ph + ki * dh + off_h
-                    w = ox * sw - pw + kj * dw + off_w
-                    m = mask[k, oy, ox].item() if mask is not None else 1.0
                     for c in range(C):
+                        g = c // cpg
+                        off_h = offset[g * 2 * kh * kw + 2 * k, oy, ox].item()
+                        off_w = offset[g * 2 * kh * kw + 2 * k + 1,
+                                       oy, ox].item()
+                        h = oy * sh - ph + ki * dh + off_h
+                        w = ox * sw - pw + kj * dw + off_w
+                        m = mask[g * kh * kw + k, oy, ox].item() \
+                            if mask is not None else 1.0
                         cols[c * kh * kw + k, oy * ow + ox] = \
                             _bilinear(inp[c], h, w) * m
     return cols
@@ -183,8 +188,51 @@ def main():
     ok &= check("stage3b full forward (N=2, bias) vs torchvision CPU",
                 got, want)
 
+    if not ok:
+        sys.exit(1)
+
+    # --- Stage 4: dg > 1, distinct constant offset per group (Phase 5) -------
+    # Trap this stage exists for: a wrong deformable_group_index reads valid
+    # memory from the *wrong* group — plausible values, not NaN. Giving each
+    # group a different constant offset makes that bug shift the wrong
+    # channels by the wrong amount, which the reference comparison catches.
+    kh = kw = 2
+    stride, pad, dil = (1, 1), (0, 0), (1, 1)
+    H = W = 5
+    oh = ow = 4
+    for (C, dg) in [(4, 2),   # cpg=2
+                    (6, 2),   # cpg=3 — non-power-of-two split
+                    (4, 4)]:  # dg=C — one channel per group, extreme case
+        inp = torch.randn(1, C, H, W)
+        offset = torch.empty(1, 2 * dg * kh * kw, oh, ow)
+        for g in range(dg):  # distinct (h, w) shift per group
+            offset[0, g * 2 * kh * kw:(g + 1) * 2 * kh * kw:2] = 0.3 + 0.4 * g
+            offset[0, g * 2 * kh * kw + 1:(g + 1) * 2 * kh * kw:2] = \
+                -0.6 + 0.5 * g
+        got = native_columns(inp, offset, None, kh, kw, stride, pad, dil,
+                             dg=dg)
+        want = ref_im2col(inp[0], offset[0], None, kh, kw, stride, pad, dil,
+                          dg=dg)
+        ok &= check(f"stage4 dg={dg} C={C} distinct const offset per group",
+                    got, want)
+
+    # 4b: dg=2 random offsets + per-group mask -> mask group indexing too.
+    C, dg = 6, 2
+    inp = torch.randn(1, C, H, W)
+    offset = torch.randn(1, 2 * dg * kh * kw, oh, ow) * 2.0
+    mask = torch.rand(1, dg * kh * kw, oh, ow)
+    got = native_columns(inp, offset, mask, kh, kw, stride, pad, dil, dg=dg)
+    want = ref_im2col(inp[0], offset[0], mask[0], kh, kw, stride, pad, dil,
+                      dg=dg)
+    ok &= check("stage4b dg=2 C=6 random offsets + mask", got, want)
+    if not ok:
+        print("\nStage 4 failed with 1-3 green -> deformable_group_index "
+              "math (c / channels_per_deformable_group, or the "
+              "dg_index * col_step + k offset/mask indices) is wrong.")
+        sys.exit(1)
+
     if ok:
-        print("\nAll stages passed. Forward is live (Phase 2); "
+        print("\nAll stages passed. Forward is live incl. dg > 1 (Phase 5); "
               "regression: make test-forward-native.")
     sys.exit(0 if ok else 1)
 
