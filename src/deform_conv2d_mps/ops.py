@@ -61,11 +61,15 @@ def _pair(x) -> Tuple[int, int]:
 
 
 class _DeformConv2dFunction(torch.autograd.Function):
-    """Autograd wrapper around the native MPS op.
+    """Autograd wrapper around the native MPS ops.
 
-    Forward calls the native op. Backward (Phase 3) dispatches the col2im /
-    col2im_coord kernels for grad_input/offset/mask and uses torch ops for
-    grad_weight/bias. Currently raises until the kernels land.
+    Forward calls the native forward. Backward (Phase 3) calls the fused
+    native backward: col2im / col2im_coord Metal kernels produce
+    grad_input/grad_offset/grad_mask; grad_weight/grad_bias come from plain
+    torch ops inside the same fused op.
+
+    TODO(Phase 4): gradcheck the backward, fix test markers, then flip
+    ``_BACKWARD_READY`` so training routes natively without the force flag.
     """
 
     @staticmethod
@@ -84,10 +88,28 @@ class _DeformConv2dFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        # TODO(Phase 3): dispatch deformable_col2im + deformable_col2im_coord.
-        raise NotImplementedError(
-            "Native MPS backward not implemented yet (scaffold). "
-            "Use the torchvision fallback for training until Phase 3 lands.")
+        input, weight, offset, mask, bias = ctx.saved_tensors
+        stride, padding, dilation, groups, deformable_groups = ctx.params
+
+        # Same empty-tensor convention as the forward: empty mask == DCNv1,
+        # empty bias == no bias (forward saves bias as empty(0) when None).
+        has_mask = mask is not None and mask.numel() > 0
+        has_bias = bias is not None and bias.numel() > 0
+
+        grad_input, grad_offset, grad_mask, grad_weight, grad_bias = \
+            torch.ops.deform_conv2d_mps.deform_conv2d_backward(
+                grad_output.contiguous(), input, weight, offset,
+                mask if has_mask else torch.empty(0, device=input.device),
+                bias.to(input.device) if has_bias else None,
+                stride[0], stride[1], padding[0], padding[1],
+                dilation[0], dilation[1], groups, deformable_groups)
+
+        # Positional grads for forward(input, weight, offset, mask, bias,
+        # stride, padding, dilation, groups, deformable_groups).
+        return (grad_input, grad_weight, grad_offset,
+                grad_mask if has_mask else None,
+                grad_bias if has_bias else None,
+                None, None, None, None, None)
 
 
 def ext_op_forward(ext, input, weight, offset, mask, bias,

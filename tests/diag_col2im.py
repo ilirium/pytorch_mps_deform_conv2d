@@ -188,10 +188,62 @@ def main():
               "get_coordinate_weight / the OOB sentinel.")
         sys.exit(1)
 
-    # Stage 4 lands with Phase 3 Steps 4-5.
+    # --- Stage 4: full native backward smoke vs torchvision CPU ---------------
+    # Calls _DeformConv2dFunction directly, which bypasses the readiness
+    # gating (equivalent to DCN_MPS_FORCE_NATIVE=1). All five grads.
+    def backward_case(name, use_mask, use_bias):
+        N, C, outC, H, W, kh, kw = 2, 3, 4, 8, 8, 3, 3
+        stride, pad, dil = (1, 1), (1, 1), (1, 1)
+        oh = ow = 8
+        inp = torch.randn(N, C, H, W)
+        weight = torch.randn(outC, C, kh, kw)
+        offset = torch.randn(N, 2 * kh * kw, oh, ow)
+        mask = torch.rand(N, kh * kw, oh, ow) if use_mask else None
+        bias = torch.randn(outC) if use_bias else None
+        gout = torch.randn(N, outC, oh, ow)
+
+        # CPU reference grads via torchvision autograd.
+        ref = {"input": inp.clone().requires_grad_(True),
+               "weight": weight.clone().requires_grad_(True),
+               "offset": offset.clone().requires_grad_(True)}
+        if use_mask:
+            ref["mask"] = mask.clone().requires_grad_(True)
+        if use_bias:
+            ref["bias"] = bias.clone().requires_grad_(True)
+        out_ref = tvops.deform_conv2d(
+            ref["input"], ref["offset"], ref["weight"],
+            bias=ref.get("bias"), stride=stride, padding=pad,
+            dilation=dil, mask=ref.get("mask"))
+        out_ref.backward(gout)
+
+        # Native path on MPS.
+        nat = {k: v.detach().to("mps").requires_grad_(True)
+               for k, v in ref.items()}
+        out_nat = ops._DeformConv2dFunction.apply(
+            nat["input"], nat["weight"], nat["offset"],
+            nat.get("mask"), nat.get("bias"),
+            stride, pad, dil, 1, 1)
+        good = check(f"{name} forward parity",
+                     out_nat.detach().cpu(), out_ref.detach(),
+                     rtol=2e-3, atol=1e-4)
+        out_nat.backward(gout.to("mps"))
+        for key in ref:
+            good &= check(f"{name} grad_{key}",
+                          nat[key].grad.cpu(), ref[key].grad,
+                          rtol=2e-3, atol=1e-4)
+        return good
+
+    ok &= backward_case("stage4 DCNv2 (mask + bias)", True, True)
+    ok &= backward_case("stage4b DCNv1 (no mask, no bias)", False, False)
+    if not ok:
+        print("\nStage 4 failed with stages 1-3 green -> the fused host op's "
+              "batch wiring (slices/offsets/GEMMs) or ops.py grad mapping "
+              "is wrong, not the kernels.")
+        sys.exit(1)
 
     if ok:
-        print("\nAll implemented stages passed.")
+        print("\nAll stages passed. Next: Phase 4 — gradcheck, fix "
+              "test_backward markers, flip _BACKWARD_READY.")
     sys.exit(0 if ok else 1)
 
 

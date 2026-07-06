@@ -86,8 +86,9 @@ examples:  ## Run the example scripts
 	$(PYTHON) example/example02_deform_conv2d_gradcheck.py
 
 .PHONY: diag
-diag:  ## Phase-1 diagnostics: im2col isolation ladder (tests/diag_im2col.py)
+diag:  ## All diagnostics: im2col (forward) + col2im (backward) ladders
 	$(PYTHON) tests/diag_im2col.py
+	$(PYTHON) tests/diag_col2im.py
 
 .PHONY: diag-backward
 diag-backward:  ## Phase-3 diagnostics: backward/col2im isolation ladder (tests/diag_col2im.py)

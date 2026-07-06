@@ -2,12 +2,14 @@
 //
 // Responsibilities:
 //   * compile the MSL source (passed in from Python) into a cached MTLLibrary
-//   * expose `add_one` (Phase-0 pipeline check) and `deform_conv2d_forward`
+//   * expose `add_one` / `atomic_smoke` (pipeline checks),
+//     `deform_conv2d_forward`, the single-image backward building blocks
+//     (`deformable_col2im`, `deformable_col2im_coord` — also used by the diag
+//     ladder) and the fused `deform_conv2d_backward`
 //   * register everything with PyTorch via TORCH_LIBRARY
 //
 // Dispatch uses the public `torch::mps` API (command buffer + serial dispatch
-// queue) so our kernels stay in stream with surrounding ATen ops. Backward is
-// intentionally left as a stub; see TODO(Phase 3).
+// queue) so our kernels stay in stream with surrounding ATen ops.
 
 #include <torch/extension.h>
 #include <torch/mps.h>
@@ -630,6 +632,225 @@ std::tuple<at::Tensor, at::Tensor> deformable_col2im_coord(
     return std::make_tuple(grad_offset, grad_mask);
 }
 
+// ---------------------------------------------------------------------------
+// Backward: fused deform_conv2d_backward (Phase 3, Step 4). Mirrors
+// torchvision's op: returns (grad_input, grad_offset, grad_mask, grad_weight,
+// grad_bias). grad_input/grad_offset/grad_mask come from the Metal kernels;
+// grad_weight/grad_bias from plain ATen ops.
+//
+// Per batch element (threading rule: every ATen op OUTSIDE dispatch_sync;
+// the kernel dispatches re-fetch the command buffer internally):
+//   1. grad_columns = W^T @ grad_output[n]                      (ATen mm)
+//   2. coord kernel(grad_columns, x[n], off[n], msk[n])
+//        -> grad_offset[n], grad_mask[n]
+//   3. col2im kernel(grad_columns, off[n], msk[n]) -> grad_input[n]
+//   4. im2col kernel(x[n], off[n], msk[n]) -> columns (recomputed, as the
+//      reference does — cheaper than saving N column buffers from forward)
+//   5. grad_weight += grad_output[n] @ columns^T                (ATen mm)
+// After the loop: grad_bias = grad_output.sum({0, 2, 3}) if bias defined.
+//
+// Steps 2 and 3 reuse the single-image ops validated by the diag ladder;
+// select(0, n) slices stay views (contiguous, storage_offset-based), which
+// their buffer bindings honour.
+// ---------------------------------------------------------------------------
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+deform_conv2d_backward(
+        const at::Tensor& grad_output,  // (N, outC, out_h, out_w)
+        const at::Tensor& input,        // (N, C, H, W)
+        const at::Tensor& weight,       // (outC, C/groups, kh, kw)
+        const at::Tensor& offset,       // (N, 2*dg*kh*kw, out_h, out_w)
+        const at::Tensor& mask,         // (N, dg*kh*kw, out_h, out_w) or empty
+        const c10::optional<at::Tensor>& bias,
+        int64_t stride_h, int64_t stride_w,
+        int64_t pad_h, int64_t pad_w,
+        int64_t dilation_h, int64_t dilation_w,
+        int64_t groups, int64_t deformable_groups) {
+    // --- Validation (mirrors forward) + grad_output shape ---------------------
+    TORCH_CHECK(grad_output.device().is_mps() && input.device().is_mps() &&
+                weight.device().is_mps() && offset.device().is_mps(),
+                "deform_conv2d_backward: grad_output, input, weight and offset "
+                "must be MPS tensors");
+    TORCH_CHECK(grad_output.scalar_type() == at::kFloat &&
+                input.scalar_type() == at::kFloat &&
+                weight.scalar_type() == at::kFloat &&
+                offset.scalar_type() == at::kFloat,
+                "deform_conv2d_backward: only float32 is supported (Phase 3)");
+    TORCH_CHECK(input.dim() == 4, "input must be 4-D, got ", input.dim());
+    TORCH_CHECK(weight.dim() == 4, "weight must be 4-D, got ", weight.dim());
+    TORCH_CHECK(offset.dim() == 4, "offset must be 4-D, got ", offset.dim());
+    TORCH_CHECK(grad_output.dim() == 4, "grad_output must be 4-D, got ",
+                grad_output.dim());
+    TORCH_CHECK(groups == 1,
+                "deform_conv2d_backward: groups != 1 not supported yet (Phase 5), got ",
+                groups);
+    TORCH_CHECK(stride_h > 0 && stride_w > 0, "stride must be positive");
+    TORCH_CHECK(dilation_h > 0 && dilation_w > 0, "dilation must be positive");
+
+    auto go = grad_output.contiguous();
+    auto x = input.contiguous();
+    auto w = weight.contiguous();
+    auto off = offset.contiguous();
+
+    const int64_t N = x.size(0), C = x.size(1), H = x.size(2), W = x.size(3);
+    const int64_t outC = w.size(0), kh = w.size(2), kw = w.size(3);
+    TORCH_CHECK(w.size(1) * groups == C,
+                "weight shape mismatch: expected in-channels ", C,
+                ", got ", w.size(1) * groups);
+
+    const int64_t out_h =
+        (H + 2 * pad_h - dilation_h * (kh - 1) - 1) / stride_h + 1;
+    const int64_t out_w =
+        (W + 2 * pad_w - dilation_w * (kw - 1) - 1) / stride_w + 1;
+    const int64_t out_hw = out_h * out_w;
+    TORCH_CHECK(go.size(0) == N && go.size(1) == outC &&
+                go.size(2) == out_h && go.size(3) == out_w,
+                "grad_output shape mismatch: expected (", N, ", ", outC, ", ",
+                out_h, ", ", out_w, "), got ", go.sizes());
+
+    const int64_t dg = deformable_groups;
+    TORCH_CHECK(dg > 0, "deformable_groups must be positive, got ", dg);
+    TORCH_CHECK(C % dg == 0, "channels (", C,
+                ") not divisible by deformable_groups (", dg, ")");
+    TORCH_CHECK(off.size(0) == N && off.size(1) == 2 * dg * kh * kw &&
+                off.size(2) == out_h && off.size(3) == out_w,
+                "offset shape mismatch: expected (", N, ", ", 2 * dg * kh * kw,
+                ", ", out_h, ", ", out_w, "), got ", off.sizes());
+
+    const bool use_mask = mask.defined() && mask.numel() > 0;
+    at::Tensor msk;
+    if (use_mask) {
+        TORCH_CHECK(mask.device().is_mps() && mask.scalar_type() == at::kFloat,
+                    "mask must be a float32 MPS tensor");
+        msk = mask.contiguous();
+        TORCH_CHECK(msk.dim() == 4 && msk.size(0) == N &&
+                    msk.size(1) == dg * kh * kw &&
+                    msk.size(2) == out_h && msk.size(3) == out_w,
+                    "mask shape mismatch: expected (", N, ", ", dg * kh * kw,
+                    ", ", out_h, ", ", out_w, "), got ", msk.sizes());
+    }
+
+    const bool use_bias = bias.has_value() && bias->defined() &&
+                          bias->numel() > 0;
+
+    // --- Allocation (all ATen, all outside dispatch_sync) ---------------------
+    // Kernels + weight GEMM accumulate -> grads start zeroed.
+    auto grad_input = at::zeros_like(x);
+    auto grad_offset = at::zeros_like(off);
+    auto grad_mask = use_mask ? at::zeros_like(msk)
+                              : at::empty({0}, x.options());
+    auto grad_weight_2d = at::zeros({outC, C * kh * kw}, w.options());
+    auto columns = at::empty({C * kh * kw, out_hw}, x.options());
+    auto empty_mps = at::empty({0}, x.options());  // mask stand-in (DCNv1)
+
+    auto w2d = w.view({outC, C * kh * kw});
+
+    // Zero-size edge cases: nothing to dispatch; zeroed grads are the answer.
+    const bool skip_loop = (N == 0 || C == 0 || outC == 0 || out_hw == 0);
+
+    if (!skip_loop) {
+        // im2col recompute setup (identical to the forward's dispatch).
+        DeformConvParams params;
+        params.batch = 1;
+        params.channels = static_cast<int>(C);
+        params.height = static_cast<int>(H);
+        params.width = static_cast<int>(W);
+        params.kernel_h = static_cast<int>(kh);
+        params.kernel_w = static_cast<int>(kw);
+        params.pad_h = static_cast<int>(pad_h);
+        params.pad_w = static_cast<int>(pad_w);
+        params.stride_h = static_cast<int>(stride_h);
+        params.stride_w = static_cast<int>(stride_w);
+        params.dilation_h = static_cast<int>(dilation_h);
+        params.dilation_w = static_cast<int>(dilation_w);
+        params.out_h = static_cast<int>(out_h);
+        params.out_w = static_cast<int>(out_w);
+        params.deformable_groups = static_cast<int>(dg);
+        params.channels_per_deformable_group = static_cast<int>(C / dg);
+        params.use_mask = use_mask ? 1 : 0;
+
+        const int64_t im_plane = C * H * W;
+        const int64_t off_plane = 2 * dg * kh * kw * out_hw;
+        const int64_t msk_plane = dg * kh * kw * out_hw;
+        const int64_t im2col_total = C * out_hw;
+
+        id<MTLComputePipelineState> pso_im2col = pipeline_for("deformable_im2col");
+        dispatch_queue_t q = torch::mps::get_dispatch_queue();
+
+        for (int64_t n = 0; n < N; ++n) {
+            auto off_n = off.select(0, n);
+            auto msk_n = use_mask ? msk.select(0, n) : empty_mps;
+            auto go_n = go.select(0, n).view({outC, out_hw});
+
+            // 1. Column-buffer gradient (ATen, outside any dispatch block).
+            auto grad_columns = w2d.t().mm(go_n);  // (C*kh*kw, out_hw)
+
+            // 2. grad_offset[n], grad_mask[n] (coord kernel; no atomics).
+            auto coord_grads = deformable_col2im_coord(
+                grad_columns, x.select(0, n), off_n, msk_n,
+                kh, kw, stride_h, stride_w, pad_h, pad_w,
+                dilation_h, dilation_w, dg);
+            grad_offset.select(0, n).copy_(std::get<0>(coord_grads));
+            if (use_mask) {
+                grad_mask.select(0, n).copy_(std::get<1>(coord_grads));
+            }
+
+            // 3. grad_input[n] (col2im kernel; atomic scatter).
+            grad_input.select(0, n).copy_(deformable_col2im(
+                grad_columns, off_n, msk_n, H, W, kh, kw,
+                stride_h, stride_w, pad_h, pad_w,
+                dilation_h, dilation_w, dg));
+
+            // 4. Recompute forward columns for image n (same dispatch as the
+            // forward pass; command buffer re-fetched — the interleaved ATen
+            // ops may have committed and recycled it).
+            id<MTLCommandBuffer> cmd_buf = torch::mps::get_command_buffer();
+            TORCH_CHECK(cmd_buf != nil, "Could not obtain an MPS command buffer");
+            dispatch_sync(q, ^{
+                @autoreleasepool {
+                    id<MTLComputeCommandEncoder> enc = [cmd_buf computeCommandEncoder];
+                    [enc setComputePipelineState:pso_im2col];
+                    [enc setBuffer:getMTLBufferStorage(x)
+                            offset:(x.storage_offset() + n * im_plane) * x.element_size()
+                           atIndex:0];
+                    [enc setBuffer:getMTLBufferStorage(off)
+                            offset:(off.storage_offset() + n * off_plane) * off.element_size()
+                           atIndex:1];
+                    if (use_mask) {
+                        [enc setBuffer:getMTLBufferStorage(msk)
+                                offset:(msk.storage_offset() + n * msk_plane) * msk.element_size()
+                               atIndex:2];
+                    } else {
+                        [enc setBuffer:getMTLBufferStorage(off)
+                                offset:off.storage_offset() * off.element_size()
+                               atIndex:2];
+                    }
+                    [enc setBuffer:getMTLBufferStorage(columns)
+                            offset:columns.storage_offset() * columns.element_size()
+                           atIndex:3];
+                    [enc setBytes:&params length:sizeof(params) atIndex:4];
+
+                    NSUInteger tg = MIN((NSUInteger)pso_im2col.maxTotalThreadsPerThreadgroup,
+                                        (NSUInteger)im2col_total);
+                    [enc dispatchThreads:MTLSizeMake((NSUInteger)im2col_total, 1, 1)
+                      threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
+                    [enc endEncoding];
+                    torch::mps::commit();
+                }
+            });
+
+            // 5. Accumulate grad_weight (ATen, outside the dispatch block).
+            grad_weight_2d.add_(go_n.mm(columns.t()));
+        }
+    }
+
+    auto grad_weight = grad_weight_2d.view({outC, C / groups, kh, kw});
+    auto grad_bias = use_bias ? go.sum(at::IntArrayRef{0, 2, 3})
+                              : at::empty({0}, x.options());
+
+    return std::make_tuple(grad_input, grad_offset, grad_mask,
+                           grad_weight, grad_bias);
+}
+
 TORCH_LIBRARY(deform_conv2d_mps, m) {
     m.def("add_one(Tensor input) -> Tensor");
     m.def("atomic_smoke(Tensor input) -> Tensor");
@@ -648,6 +869,12 @@ TORCH_LIBRARY(deform_conv2d_mps, m) {
         "Tensor mask, Tensor? bias, int stride_h, int stride_w, int pad_h, "
         "int pad_w, int dilation_h, int dilation_w, int groups, "
         "int deformable_groups) -> Tensor");
+    m.def(
+        "deform_conv2d_backward(Tensor grad_output, Tensor input, "
+        "Tensor weight, Tensor offset, Tensor mask, Tensor? bias, "
+        "int stride_h, int stride_w, int pad_h, int pad_w, int dilation_h, "
+        "int dilation_w, int groups, int deformable_groups) "
+        "-> (Tensor, Tensor, Tensor, Tensor, Tensor)");
 }
 
 TORCH_LIBRARY_IMPL(deform_conv2d_mps, MPS, m) {
@@ -656,6 +883,7 @@ TORCH_LIBRARY_IMPL(deform_conv2d_mps, MPS, m) {
     m.impl("deformable_col2im", TORCH_FN(deformable_col2im));
     m.impl("deformable_col2im_coord", TORCH_FN(deformable_col2im_coord));
     m.impl("deform_conv2d_forward", TORCH_FN(deform_conv2d_forward));
+    m.impl("deform_conv2d_backward", TORCH_FN(deform_conv2d_backward));
 }
 
 // pybind: expose the one-time library compile hook to Python.
