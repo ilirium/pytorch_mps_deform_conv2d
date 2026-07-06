@@ -187,6 +187,11 @@ def test_backward_extra_cases(case):
 #   spuriously ("backward is not deterministic" that looks like a bug).
 _FP32_GRADCHECK_KW = dict(eps=1e-3, atol=1e-2, rtol=1e-2, nondet_tol=1e-3)
 
+# gradcheck warns that fp32 inputs "will likely fail" — running fp32 is the
+# point on MPS (fp64 is unsupported), and the knobs above account for it.
+_expected_fp32_warning = pytest.mark.filterwarnings(
+    "ignore:Input #.*double precision:UserWarning")
+
 
 def _gradcheck_inputs(device, use_mask, dtype=torch.float32):
     """Tiny case — gradcheck is O(numel) backward calls.
@@ -225,6 +230,7 @@ def _run_fp32_gradcheck(op, device, use_mask):
     assert torch.autograd.gradcheck(fn, inputs, **_FP32_GRADCHECK_KW)
 
 
+@_expected_fp32_warning
 @pytest.mark.parametrize("use_mask", [False, True])
 def test_gradcheck_cpu_fp32_calibration(use_mask):
     """Same case/knobs as the native fp32 gradcheck, on torchvision CPU fp32.
@@ -235,6 +241,7 @@ def test_gradcheck_cpu_fp32_calibration(use_mask):
     _run_fp32_gradcheck(tv_deform_conv2d, "cpu", use_mask)
 
 
+@_expected_fp32_warning
 @requires_mps()
 @pytest.mark.parametrize("use_mask", [False, True])
 def test_gradcheck_native_fp32(use_mask):
