@@ -3,7 +3,7 @@
 // THREE kernels are needed (everything else reuses torch ops):
 //   1. deformable_im2col        (forward gather)        -- IMPLEMENTED (single-group reference)
 //   2. deformable_col2im        (backward -> grad input)   -- IMPLEMENTED (Phase 3, Step 2)
-//   3. deformable_col2im_coord  (backward -> grad offset/mask) -- STUB
+//   3. deformable_col2im_coord  (backward -> grad offset/mask) -- IMPLEMENTED (Phase 3, Step 3)
 //
 // Plus `add_one` — a trivial Phase-0 kernel to validate the .mm -> Metal ->
 // tensor pipeline end to end before the deform logic is trusted.
@@ -204,23 +204,92 @@ kernel void deformable_col2im(
 }
 
 // ---------------------------------------------------------------------------
-// 3. deformable_col2im_coord  (BACKWARD -> grad_offset, grad_mask)  -- STUB
+// 3. deformable_col2im_coord  (BACKWARD -> grad_offset, grad_mask)
 //
-// For each offset element, accumulate the gradient via get_coordinate_weight,
-// and (DCNv2) accumulate grad_mask from the plain bilinear sample.
+// One thread per offset element: total = 2*dg*kh*kw*out_h*out_w per image
+// (batch via host loop). Each thread owns a unique grad_offset element — and,
+// for the h-component (bp_dir == 0) threads, the corresponding grad_mask
+// element — so NO atomics are needed.
 //
-// TODO(Phase 3): port from torchvision deformable_col2im_coord_kernel.
+// The thread's offset channel decomposes into (dgi, k, bp_dir); it then loops
+// over the channels_per_deformable_group input channels that share this
+// offset, accumulating
+//   grad_offset += col_grad * mask * d(bilinear)/d(coord)   (get_coordinate_weight)
+//   grad_mask   += col_grad * bilinear(im)                  (DCNv2, h-thread only)
+//
+// Ported from torchvision deformable_col2im_coord_kernel. The fully-OOB
+// sentinel (inv_h = inv_w = -2) forces zero contributions; partially-OOB taps
+// in (-1, 0) fall through to the per-corner guards in the helpers, matching
+// the reference.
 // ---------------------------------------------------------------------------
 kernel void deformable_col2im_coord(
-        const device float*  data_col     [[buffer(0)]],
-        const device float*  data_im      [[buffer(1)]],
-        const device float*  data_offset  [[buffer(2)]],
-        const device float*  data_mask    [[buffer(3)]],
-        device float*        grad_offset  [[buffer(4)]],
-        device float*        grad_mask    [[buffer(5)]],
+        const device float*  data_col     [[buffer(0)]],  // (C*kh*kw, out_h*out_w) col grad
+        const device float*  data_im      [[buffer(1)]],  // (C, H, W) forward input
+        const device float*  data_offset  [[buffer(2)]],  // (2*dg*kh*kw, out_h, out_w)
+        const device float*  data_mask    [[buffer(3)]],  // (dg*kh*kw, out_h, out_w) or unused
+        device float*        grad_offset  [[buffer(4)]],  // (2*dg*kh*kw, out_h, out_w)
+        device float*        grad_mask    [[buffer(5)]],  // (dg*kh*kw, out_h, out_w) or unused
         constant DeformConvParams& p      [[buffer(6)]],
         uint gid                          [[thread_position_in_grid]]) {
-    // STUB — see TODO above.
-    (void)data_col; (void)data_im; (void)data_offset; (void)data_mask;
-    (void)grad_offset; (void)grad_mask; (void)p; (void)gid;
+
+    int out_hw = p.out_h * p.out_w;
+    int col_step = p.kernel_h * p.kernel_w;
+    int offset_channels = 2 * p.deformable_groups * col_step;
+    int total = offset_channels * out_hw;
+    if ((int)gid >= total) return;
+
+    // gid is the linear index into grad_offset: ((c * out_h) + oy) * out_w + ox
+    int ox = (int)gid % p.out_w;
+    int oy = ((int)gid / p.out_w) % p.out_h;
+    int c  = (int)gid / out_hw;
+
+    int dgi = c / (2 * col_step);
+    int offset_c = c - dgi * 2 * col_step;
+    int bp_dir = offset_c % 2;   // 0 -> d/dh (y), 1 -> d/dw (x)
+    int k = offset_c / 2;        // this thread's kernel tap
+    int ki = k / p.kernel_w;
+    int kj = k % p.kernel_w;
+
+    // Same offset/mask index expressions as the forward gather — copied.
+    int off_h_idx = ((2 * (dgi * col_step + k)    ) * p.out_h + oy) * p.out_w + ox;
+    int off_w_idx = ((2 * (dgi * col_step + k) + 1) * p.out_h + oy) * p.out_w + ox;
+    float off_h = data_offset[off_h_idx];
+    float off_w = data_offset[off_w_idx];
+
+    int m_idx = ((dgi * col_step + k) * p.out_h + oy) * p.out_w + ox;
+    float mask_value = 1.0f;
+    if (p.use_mask) {
+        mask_value = data_mask[m_idx];
+    }
+
+    float inv_h = oy * p.stride_h - p.pad_h + ki * p.dilation_h + off_h;
+    float inv_w = ox * p.stride_w - p.pad_w + kj * p.dilation_w + off_w;
+    // Reference's fully-OOB sentinel: both helpers return 0 at (-2, -2).
+    if (inv_h <= -1 || inv_w <= -1 || inv_h >= p.height || inv_w >= p.width) {
+        inv_h = inv_w = -2.0f;
+    }
+
+    int cpg = p.channels_per_deformable_group;
+    float val = 0.0f;
+    float mval = 0.0f;
+    for (int ch = 0; ch < cpg; ++ch) {
+        int c_im = dgi * cpg + ch;
+        const device float* im_plane = data_im + c_im * p.height * p.width;
+        float col_v = data_col[(c_im * col_step + k) * out_hw + oy * p.out_w + ox];
+
+        float weight = get_coordinate_weight(im_plane, p.height, p.width,
+                                             inv_h, inv_w, bp_dir);
+        val += mask_value * weight * col_v;
+
+        if (p.use_mask && bp_dir == 0) {
+            // Mask grad comes from the h-component thread only (reference).
+            mval += col_v * bilinear_interpolate(im_plane, p.height, p.width,
+                                                 inv_h, inv_w);
+        }
+    }
+
+    grad_offset[gid] = val;
+    if (p.use_mask && bp_dir == 0) {
+        grad_mask[m_idx] = mval;
+    }
 }

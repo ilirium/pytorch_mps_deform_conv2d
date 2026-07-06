@@ -36,6 +36,7 @@ from deform_conv2d_mps import ops  # noqa: E402
 
 _ext = ops._load_native()  # compiles the Metal library, registers the ops
 _col2im = torch.ops.deform_conv2d_mps.deformable_col2im
+_col2im_coord = torch.ops.deform_conv2d_mps.deformable_col2im_coord
 
 
 def native_col2im(cols, offset, mask, H, W, kh, kw, stride, pad, dil, dg=1):
@@ -144,7 +145,50 @@ def main():
               "(get_gradient_weight) or the mask/offset indexing are wrong.")
         sys.exit(1)
 
-    # Stages 3-4 land with Phase 3 Steps 3-5.
+    # --- Stage 3: numerical grad_offset / grad_mask ----------------------------
+    # No atomics in the coord kernel -> deterministic, forward-level tolerance.
+    def coord_case(name, C, outC, H, W, kh, kw, stride, pad, dil, use_mask):
+        oh = (H + 2 * pad[0] - dil[0] * (kh - 1) - 1) // stride[0] + 1
+        ow = (W + 2 * pad[1] - dil[1] * (kw - 1) - 1) // stride[1] + 1
+        inp = torch.randn(1, C, H, W)
+        weight = torch.randn(outC, C, kh, kw)
+        offset = (torch.randn(1, 2 * kh * kw, oh, ow) * 1.5).requires_grad_(True)
+        mask = torch.rand(1, kh * kw, oh, ow).requires_grad_(True) \
+            if use_mask else None
+        gout = torch.randn(1, outC, oh, ow)
+
+        out = tvops.deform_conv2d(inp, offset, weight, stride=stride,
+                                  padding=pad, dilation=dil, mask=mask)
+        out.backward(gout)
+
+        grad_cols = weight.view(outC, -1).t().mm(gout[0].view(outC, oh * ow))
+        mask_arg = mask[0].detach().to("mps") if use_mask \
+            else torch.empty(0, device="mps")
+        g_off, g_mask = _col2im_coord(
+            grad_cols.to("mps"), inp[0].to("mps"),
+            offset[0].detach().to("mps"), mask_arg,
+            kh, kw, stride[0], stride[1], pad[0], pad[1], dil[0], dil[1], 1)
+
+        good = check(f"{name} grad_offset", g_off.cpu(), offset.grad[0])
+        if use_mask:
+            good &= check(f"{name} grad_mask", g_mask.cpu(), mask.grad[0])
+        return good
+
+    # Plan's tiny case: wrong elements are hand-traceable.
+    ok &= coord_case("stage3 tiny C=1 k=2 5x5 (mask)",
+                     1, 1, 5, 5, 2, 2, (1, 1), (0, 0), (1, 1), True)
+    # DCNv1 path (no mask) + multi-channel accumulation over cpg.
+    ok &= coord_case("stage3b C=2 k=3 no-mask",
+                     2, 3, 6, 5, 3, 3, (1, 1), (1, 1), (1, 1), False)
+    ok &= coord_case("stage3c C=3 stride/dil asym (mask)",
+                     3, 2, 8, 7, 3, 2, (2, 1), (1, 0), (1, 2), True)
+    if not ok:
+        print("\nStage 3 failed -> coord-grad path: check the offset/mask "
+              "index interleaving first (top suspect), then "
+              "get_coordinate_weight / the OOB sentinel.")
+        sys.exit(1)
+
+    # Stage 4 lands with Phase 3 Steps 4-5.
 
     if ok:
         print("\nAll implemented stages passed.")
