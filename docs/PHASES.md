@@ -42,15 +42,18 @@ Done:
 - Regression finding: `torchvision::_deform_conv2d_backward` has no MPS kernel — the fallback backward needs `PYTORCH_ENABLE_MPS_FALLBACK=1`, now set in `tests/conftest.py` (was shell-env dependent before).
 - Logs: `Implementing_Phase2_001…004` (final green: `_004_good.txt` — 66 passed + 1 skipped full suite, 60 + 1 forward-native).
 
-## Phase 3 — Native backward ⬜ Not started
+## Phase 3 — Native backward ✅ Done (2026-07-06)
 
-**Goal:** full autograd — grad input, offset, mask via Metal; grad weight, bias via torch ops.
+**Goal:** full autograd — grad input, offset, mask via Metal; grad weight, bias via torch ops. See [PHASE3_PLAN.md](PHASE3_PLAN.md) for the plan this followed.
 
-- `deformable_col2im` (→ grad_input): scatter-add with bilinear weights. Needs `atomic_fetch_add_explicit` on `device atomic_float` → set `opts.languageVersion = MTLLanguageVersion3_0` in `dcn_compile_library()` (currently omitted so the stub compiles).
-- `deformable_col2im_coord` (→ grad_offset, grad_mask): port `get_coordinate_weight` spatial derivatives.
-- grad_weight = grad_output ⊗ columns (GEMM), grad_bias = sum — plain torch ops.
-- Replace the `NotImplementedError` in `_DeformConv2dFunction.backward()` with dispatches of the above.
-- Port reference: `torchvision/csrc/ops/cuda/deform_conv2d_kernel.cu`.
+Done (logs: `Implementing_Phase3_001…004_good.txt`):
+
+- `MTLLanguageVersion3_0` in `dcn_compile_library()` + `atomic_smoke` kernel/op proving `device atomic_float` + `atomic_fetch_add_explicit` compile and run (landed alone, forward regression clean — the version bump surfaced no issues in existing shaders).
+- `deformable_col2im` (→ grad_input): one thread per column element, forward's exact offset/mask index expressions, ±2 window with `|Δ| < 1` guard, atomic scatter via `get_gradient_weight` (new in `bilinear.metalh`). Verified off-device as the exact transpose of the forward gather (numpy, machine precision), then on-device.
+- `deformable_col2im_coord` (→ grad_offset, grad_mask): one thread per offset element (`bp_dir = oc % 2`), loops over `channels_per_deformable_group` column rows; mask grad from h-component threads only; fully-OOB sentinel `inv_h = inv_w = -2`. No atomics. Verified off-device vs fp64 finite differences (~1e-10), then on-device.
+- Both kernels exposed as single-image ops (also used by the diag ladder); fused `deform_conv2d_backward` reuses them per batch slice, recomputes im2col per image (as the reference does), accumulates grad_weight via interleaved ATen GEMMs (all outside `dispatch_sync` — deadlock rule), `grad_bias = grad_output.sum({0,2,3})`.
+- `_DeformConv2dFunction.backward()` implemented (positional grads, `mask is None → None`, empty bias → `None`). `_BACKWARD_READY` **stays False** — flipping it is Phase 4's exit criterion; `DCN_MPS_FORCE_NATIVE=1` exercises native training today.
+- `tests/diag_col2im.py` ladder (stages 0–4: atomic smoke → fold parity → numerical grad_input → grad_offset/grad_mask → full five-grad backward smoke vs torchvision CPU, DCNv2 + DCNv1). `make diag-backward` new; folded into `make diag`. Full suite + examples stay green.
 
 ## Phase 4 — Backward correctness ⬜ Not started
 
