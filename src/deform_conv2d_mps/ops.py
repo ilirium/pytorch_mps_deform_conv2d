@@ -139,18 +139,22 @@ def deform_conv2d(
     padding = _pair(padding)
     dilation = _pair(dilation)
 
-    # Route native only when autograd won't be needed (backward is Phase 3);
-    # _FORCE_NATIVE bypasses the gating entirely for testing.
+    # Native routing needs both capability (the kernels only implement
+    # groups == 1 and deformable_groups == 1 until Phase 5) and readiness
+    # (_FORWARD_READY / _BACKWARD_READY, i.e. what the tests have verified).
+    # _FORCE_NATIVE bypasses ALL of it for testing/diagnostics.
+    kh, kw = weight.shape[-2], weight.shape[-1]
+    groups = input.shape[1] // weight.shape[1]  # inferred as torchvision does
+    deformable_groups = offset.shape[1] // (2 * kh * kw)
+    native_capable = groups == 1 and deformable_groups == 1
     needs_grad = torch.is_grad_enabled() and any(
         t is not None and t.requires_grad
         for t in (input, weight, offset, mask, bias))
     use_native = input.device.type == "mps" and (
         _FORCE_NATIVE
-        or (_FORWARD_READY and (not needs_grad or _BACKWARD_READY)))
+        or (native_capable and _FORWARD_READY
+            and (not needs_grad or _BACKWARD_READY)))
     if use_native:
-        kh, kw = weight.shape[-2], weight.shape[-1]
-        groups = 1  # extend when groups support lands
-        deformable_groups = offset.shape[1] // (2 * kh * kw)
         return _DeformConv2dFunction.apply(
             input, weight, offset, mask, bias,
             stride, padding, dilation, groups, deformable_groups)
