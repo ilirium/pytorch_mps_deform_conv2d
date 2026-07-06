@@ -3,9 +3,11 @@
 Behaviour:
   * On MPS, inference (no grad required) runs the native Metal forward
     (Phase 2: verified against the torchvision CPU reference).
-  * Training on MPS (any input requires grad) still falls back to
-    ``torchvision.ops.deform_conv2d`` until the native backward lands
-    (Phase 3/4).
+  * Training on MPS (any input requires grad) runs the native Metal
+    backward (Phase 4: per-grad comparison vs the CPU reference, fp32
+    gradcheck, training-loop convergence).
+  * groups > 1 or deformable_groups > 1 fall back to torchvision until
+    Phase 5.
   * Non-MPS devices always use the torchvision fallback.
 """
 
@@ -18,13 +20,15 @@ from typing import Optional, Tuple
 import torch
 from torch import Tensor
 
-# Set DCN_MPS_FORCE_NATIVE=1 to bypass ALL readiness gating and exercise the
-# native path unconditionally (testing/diagnostics; grad-requiring calls will
-# hit the NotImplementedError in backward until Phase 3).
+# Set DCN_MPS_FORCE_NATIVE=1 to bypass ALL gating (readiness AND the
+# groups/dg capability check) and exercise the native path unconditionally
+# (testing/diagnostics; the kernels assume groups == 1, dg == 1 until Phase 5).
 _FORCE_NATIVE = os.environ.get("DCN_MPS_FORCE_NATIVE", "0") == "1"
 
-_FORWARD_READY = True    # Phase 2 (2026-07-05): forward verified on-device.
-_BACKWARD_READY = False  # flip once Phase 3/4 backward passes gradcheck.
+_FORWARD_READY = True   # Phase 2 (2026-07-05): forward verified on-device.
+_BACKWARD_READY = True  # Phase 4 (2026-07-06): backward verified on-device —
+                        # per-grad matrix vs CPU reference, fp32 gradcheck,
+                        # training-loop convergence.
 _ext = None
 
 
@@ -66,10 +70,8 @@ class _DeformConv2dFunction(torch.autograd.Function):
     Forward calls the native forward. Backward (Phase 3) calls the fused
     native backward: col2im / col2im_coord Metal kernels produce
     grad_input/grad_offset/grad_mask; grad_weight/grad_bias come from plain
-    torch ops inside the same fused op.
-
-    TODO(Phase 4): gradcheck the backward, fix test markers, then flip
-    ``_BACKWARD_READY`` so training routes natively without the force flag.
+    torch ops inside the same fused op. Verified in Phase 4 (per-grad
+    comparison, gradcheck, training loop); training routes here by default.
     """
 
     @staticmethod
