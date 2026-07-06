@@ -1,0 +1,95 @@
+% make test
+python3 -m pytest -q
+.........................................................s.................................................................s.....                                                                                                      [100%]
+127 passed, 2 skipped in 3.95s
+
+
+% make test-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q
+.........................................................s.................................................................s.....                                                                                                      [100%]
+127 passed, 2 skipped in 3.83s
+
+
+% make test-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q
+.........................................................s.................................................................s.....                                                                                                      [100%]
+127 passed, 2 skipped in 3.83s
+(ptn) ilirium@ilirium-mbp pytorch_mps_deform_conv2d % make diag
+python3 tests/diag_im2col.py
+PASS  stage1 unfold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 unfold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 unfold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 constant offset +0.5, use_mask=0
+PASS  stage3 random offsets + mask
+PASS  stage3b full forward (N=2, bias) vs torchvision CPU
+
+All stages passed. Next: DCN_MPS_FORCE_NATIVE=1 pytest tests/test_forward.py (Phase 2).
+python3 tests/diag_col2im.py
+PASS  stage0 atomic_smoke n=100000
+PASS  stage1 fold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 fold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 fold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 grad_input const offset (0.3, -0.6), no mask
+PASS  stage2b grad_input random offsets + mask
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_offset
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_mask
+PASS  stage3b C=2 k=3 no-mask grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_mask
+PASS  stage4 DCNv2 (mask + bias) forward parity
+PASS  stage4 DCNv2 (mask + bias) grad_input
+PASS  stage4 DCNv2 (mask + bias) grad_weight
+PASS  stage4 DCNv2 (mask + bias) grad_offset
+PASS  stage4 DCNv2 (mask + bias) grad_mask
+PASS  stage4 DCNv2 (mask + bias) grad_bias
+PASS  stage4b DCNv1 (no mask, no bias) forward parity
+PASS  stage4b DCNv1 (no mask, no bias) grad_input
+PASS  stage4b DCNv1 (no mask, no bias) grad_weight
+PASS  stage4b DCNv1 (no mask, no bias) grad_offset
+
+All stages passed. Next: Phase 4 — gradcheck, fix test_backward markers, flip _BACKWARD_READY.
+
+
+% make examples
+python3 example/example01_deform_conv2d_cpu_mps.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+  [ cpu]    0.069 ms/iter   (    3.5 ms total)
+  [ mps]    0.154 ms/iter   (    7.7 ms total)
+
+  MPS vs CPU: 0.45x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)
+python3 example/example02_deform_conv2d_gradcheck.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+output spatial size: 5x5
+
+=== Check 1: CPU vs MPS backward agreement ===
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/graph.py:979: UserWarning: The operator 'torchvision::_deform_conv2d_backward' is not currently supported on the MPS backend and will fall back to run on the CPU. This may have performance implications. (Triggered internally at /Users/runner/work/pytorch/pytorch/aten/src/ATen/mps/MPSFallback.mm:34.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+  forward   max|CPU-MPS| = 2.384e-07
+  grad input  max|CPU-MPS| = 0.000e+00  ok
+  grad weight max|CPU-MPS| = 0.000e+00  ok
+  grad bias   max|CPU-MPS| = 0.000e+00  ok
+  grad offset max|CPU-MPS| = 0.000e+00  ok
+  grad mask   max|CPU-MPS| = 0.000e+00  ok
+  => PASS
+
+=== Check 2: autograd.gradcheck (CPU, float64) ===
+  => PASS

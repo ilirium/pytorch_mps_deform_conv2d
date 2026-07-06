@@ -242,8 +242,9 @@ def main():
         sys.exit(1)
 
     if ok:
-        print("\nAll stages passed. Next: Phase 4 — gradcheck, fix "
-              "test_backward markers, flip _BACKWARD_READY.")
+        print("\nAll stages passed. Backward is live (Phase 4); "
+              "regression: make test-backward-native. Next: Phase 5 "
+              "(groups/dg > 1, perf, packaging).")
     sys.exit(0 if ok else 1)
 
 

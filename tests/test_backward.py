@@ -175,6 +175,28 @@ def test_backward_extra_cases(case):
 
 
 # ---------------------------------------------------------------------------
+# Routing: post-flip, grad-requiring MPS calls must hit the native
+# autograd.Function without the force flag (plan Step 5's "quick assert").
+# ---------------------------------------------------------------------------
+
+@requires_mps()
+def test_grad_call_routes_native():
+    """A requires_grad call on MPS routes native, not to torchvision.
+
+    Guards the _BACKWARD_READY gate: if the flag regresses (or the gate
+    logic breaks), out.grad_fn becomes torchvision's backward node and
+    this fails. The native path's grad_fn is _DeformConv2dFunctionBackward.
+    """
+    x = torch.randn(1, 2, 5, 5, device="mps", requires_grad=True)
+    w = torch.randn(2, 2, 3, 3, device="mps")
+    o = torch.randn(1, 2 * 9, 3, 3, device="mps")
+    out = deform_conv2d(x, o, w)
+    assert type(out.grad_fn).__name__ == "_DeformConv2dFunctionBackward", (
+        f"grad-requiring call routed to {type(out.grad_fn).__name__} — "
+        "native backward is not the default")
+
+
+# ---------------------------------------------------------------------------
 # Gradcheck
 # ---------------------------------------------------------------------------
 

@@ -184,8 +184,8 @@ def main():
                 got, want)
 
     if ok:
-        print("\nAll stages passed. Next: DCN_MPS_FORCE_NATIVE=1 "
-              "pytest tests/test_forward.py (Phase 2).")
+        print("\nAll stages passed. Forward is live (Phase 2); "
+              "regression: make test-forward-native.")
     sys.exit(0 if ok else 1)
 
 

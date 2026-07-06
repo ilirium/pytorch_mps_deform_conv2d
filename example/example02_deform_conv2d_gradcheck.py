@@ -1,5 +1,5 @@
 """
-Gradient checks for torchvision.ops.deform_conv2d (CPU and MPS).
+Gradient checks for deform_conv2d_mps (native MPS backward vs CPU reference).
 
 Why this exists
 ---------------
@@ -14,12 +14,17 @@ Two independent checks
 ----------------------
   1. CPU-vs-MPS backward agreement
        Run .backward() on both devices with identical inputs and compare the
-       grads of every differentiable input. Catches backend-specific bugs.
+       grads of every differentiable input. Since Phase 4 the MPS run routes
+       to the *native* Metal backward (the CPU run uses the torchvision
+       reference), so this genuinely cross-checks the two implementations.
+       grad_input gets a looser bound: its atomic-scatter accumulation order
+       varies, the other grads are deterministic.
 
   2. torch.autograd.gradcheck (CPU, float64)
        Compares the analytic backward against numerical finite differences.
        Confirms the math is correct, independent of any backend. Needs double
-       precision, so it runs on CPU only (MPS has no float64).
+       precision, so it runs on CPU only (MPS has no float64; on CPU the
+       package delegates to the torchvision reference).
 
 Run:
     python example02_deform_conv2d_gradcheck.py
@@ -30,7 +35,7 @@ import os
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import torch
-from torchvision.ops import deform_conv2d
+from deform_conv2d_mps import deform_conv2d
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +97,10 @@ def check_cpu_vs_mps():
         return
 
     names = ("input", "weight", "bias", "offset", "mask")
+    # grad_input crosses the native kernel's atomic float scatter, whose
+    # accumulation order varies; everything else is deterministic.
+    tol = {"input": 2e-3}
+    default_tol = 1e-4
 
     def run(device):
         tensors = make_inputs(torch.device(device), torch.float32, requires_grad=True)
@@ -108,12 +117,14 @@ def check_cpu_vs_mps():
 
     fwd_diff = (out_cpu - out_mps).abs().max().item()
     print(f"  forward   max|CPU-MPS| = {fwd_diff:.3e}")
-    all_ok = fwd_diff < 1e-4
+    all_ok = fwd_diff < default_tol
     for name, gc, gm in zip(names, grads_cpu, grads_mps):
         d = (gc - gm).abs().max().item()
-        ok = d < 1e-4
+        bound = tol.get(name, default_tol)
+        ok = d < bound
         all_ok &= ok
-        print(f"  grad {name:<6} max|CPU-MPS| = {d:.3e}  {'ok' if ok else 'MISMATCH'}")
+        print(f"  grad {name:<6} max|CPU-MPS| = {d:.3e}  "
+              f"{'ok' if ok else 'MISMATCH'} (tol {bound:.0e})")
     print(f"  => {'PASS' if all_ok else 'FAIL'}\n")
 
 
