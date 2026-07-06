@@ -70,8 +70,8 @@ test-backward:  ## Backward + gradcheck
 	$(PYTEST) -q tests/test_backward.py
 
 .PHONY: test-backward-native
-test-backward-native:  ## Backward tests forcing the native MPS kernel (Phase 4)
-	$(NATIVE_ENV) $(PYTEST) -q tests/test_backward.py
+test-backward-native:  ## Backward + training tests forcing the native MPS kernel (Phase 4)
+	$(NATIVE_ENV) $(PYTEST) -q tests/test_backward.py tests/test_training.py
 
 .PHONY: test-module
 test-module:  ## DeformConv2d module / state_dict parity
