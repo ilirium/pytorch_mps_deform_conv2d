@@ -5,9 +5,11 @@ Two layers of checking:
      against the torchvision CPU reference grads for identical inputs,
      across a kernel/stride/pad/dilation/mask matrix plus hand-picked trap
      cases, with per-grad tolerances.
-  2. torch.autograd.gradcheck. MPS is fp32-only, so gradcheck runs on a CPU
-     fp64 reference; the MPS grads are validated against CPU fp32 with
-     relaxed tolerances in the comparison tests.
+  2. torch.autograd.gradcheck, in two layers: fp64 on the CPU reference
+     (guards the math the port targets), and fp32 through the native MPS
+     path with fp32-appropriate knobs, calibrated on a CPU fp32 run of the
+     same case so a knob problem shows up on the reference, not as a bogus
+     native failure.
 
 The native backward (Phase 3) is gated behind _BACKWARD_READY: run with
 DCN_MPS_FORCE_NATIVE=1 (`make test-backward-native`) to exercise it. Without
@@ -175,6 +177,74 @@ def test_backward_extra_cases(case):
 # ---------------------------------------------------------------------------
 # Gradcheck
 # ---------------------------------------------------------------------------
+
+# fp32 gradcheck knobs (plan Step 3):
+# - eps 1e-3: fp32 central differences; the default 1e-6 drowns in rounding.
+# - atol/rtol 1e-2: relaxed for fp32 FD noise; the analytic-comparison tests
+#   above are the load-bearing check, this is belt-and-suspenders.
+# - nondet_tol 1e-3: grad_input's atomic scatter makes repeated backward
+#   calls differ; without this, gradcheck's determinism check fails
+#   spuriously ("backward is not deterministic" that looks like a bug).
+_FP32_GRADCHECK_KW = dict(eps=1e-3, atol=1e-2, rtol=1e-2, nondet_tol=1e-3)
+
+
+def _gradcheck_inputs(device, use_mask, dtype=torch.float32):
+    """Tiny case — gradcheck is O(numel) backward calls.
+
+    Offsets are kept >= 0.1 away from integer grid points (Phase 3 trick):
+    bilinear kinks are genuine non-differentiability, not bugs, and eps=1e-3
+    perturbations never cross the 0.1 buffer.
+    """
+    torch.manual_seed(0)
+    N, inC, outC, k, H, W = 1, 2, 2, 2, 5, 5
+    dg = 1
+    out = H - k + 1  # stride 1, pad 0
+    mk = lambda *s: torch.randn(*s, device=device, dtype=dtype,
+                                requires_grad=True)
+    x = mk(N, inC, H, W)
+    w = mk(outC, inC, k, k)
+    b = mk(outC)
+    o = torch.randn(N, 2 * dg * k * k, out, out,
+                    device=device, dtype=dtype) * 0.5
+    o = (o.floor() + (o - o.floor()).clamp(0.1, 0.9)).requires_grad_(True)
+    m = None
+    if use_mask:
+        m = (torch.rand(N, dg * k * k, out, out, device=device, dtype=dtype)
+             * 0.8 + 0.1).requires_grad_(True)
+    return x, o, w, b, m
+
+
+def _run_fp32_gradcheck(op, device, use_mask):
+    x, o, w, b, m = _gradcheck_inputs(device, use_mask)
+    if use_mask:
+        fn = lambda xx, oo, ww, bb, mm: op(xx, oo, ww, bias=bb, mask=mm)
+        inputs = (x, o, w, b, m)
+    else:
+        fn = lambda xx, oo, ww, bb: op(xx, oo, ww, bias=bb)
+        inputs = (x, o, w, b)
+    assert torch.autograd.gradcheck(fn, inputs, **_FP32_GRADCHECK_KW)
+
+
+@pytest.mark.parametrize("use_mask", [False, True])
+def test_gradcheck_cpu_fp32_calibration(use_mask):
+    """Same case/knobs as the native fp32 gradcheck, on torchvision CPU fp32.
+
+    Calibration guard: if the knobs are too tight for fp32 at all, this
+    fails too — fix the knobs here before suspecting the native kernels.
+    """
+    _run_fp32_gradcheck(tv_deform_conv2d, "cpu", use_mask)
+
+
+@requires_mps()
+@pytest.mark.parametrize("use_mask", [False, True])
+def test_gradcheck_native_fp32(use_mask):
+    """fp32 gradcheck through the native path (DCNv1 no-mask / DCNv2 mask).
+
+    Checks input, offset, weight, bias (+ mask) via central differences.
+    Run with DCN_MPS_FORCE_NATIVE=1; unforced it exercises the fallback.
+    """
+    _run_fp32_gradcheck(deform_conv2d, "mps", use_mask)
+
 
 def test_gradcheck_cpu_reference():
     """gradcheck on CPU fp64 reference — guards the math the MPS port targets."""
