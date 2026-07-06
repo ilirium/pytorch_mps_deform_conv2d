@@ -7,8 +7,10 @@ Two layers of checking:
      fp64 reference; the MPS grads are validated against CPU fp32 with relaxed
      tolerances in the comparison test.
 
-These are skipped until the native backward is implemented (they xfail on the
-scaffold's NotImplementedError).
+The native backward (Phase 3) is gated behind _BACKWARD_READY: run with
+DCN_MPS_FORCE_NATIVE=1 (`make test-backward-native`) to exercise it. Without
+the flag, grad-requiring calls fall back to torchvision until the flag flips
+(Phase 4), so the comparison is reference-vs-itself and passes trivially.
 """
 
 import pytest
