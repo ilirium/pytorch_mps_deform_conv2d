@@ -55,20 +55,24 @@ Done (logs: `Implementing_Phase3_001…004_good.txt`):
 - `_DeformConv2dFunction.backward()` implemented (positional grads, `mask is None → None`, empty bias → `None`). `_BACKWARD_READY` **stays False** — flipping it is Phase 4's exit criterion; `DCN_MPS_FORCE_NATIVE=1` exercises native training today.
 - `tests/diag_col2im.py` ladder (stages 0–4: atomic smoke → fold parity → numerical grad_input → grad_offset/grad_mask → full five-grad backward smoke vs torchvision CPU, DCNv2 + DCNv1). `make diag-backward` new; folded into `make diag`. Full suite + examples stay green.
 
-## Phase 4 — Backward correctness ⬜ Not started
+## Phase 4 — Backward correctness ✅ Done (2026-07-06)
 
-**Goal:** gradients match reference.
+**Goal:** gradients match reference; `_BACKWARD_READY` flips — native becomes the default for training. See [PHASE4_PLAN.md](PHASE4_PLAN.md) for the plan this followed.
 
-- `tests/test_backward.py` exists; run natively with `DCN_MPS_FORCE_NATIVE=1`.
-- Compare each grad against torchvision CPU reference; gradcheck against CPU fp32 (MPS has no fp64 — pick tolerances accordingly).
-- Confirm a small training loop converges.
-- Exit criterion: all tests pass → flip `_BACKWARD_READY = True` in `ops.py` (native becomes the default for training too).
+Done (logs: `Implementing_Phase4_001…006`, all green first try — no kernel changes needed):
+
+- `make test-backward-native` target (the plain target compares the fallback to itself while gated; log header must show `DCN_MPS_FORCE_NATIVE=1`); stale xfail docstring rewritten.
+- Per-grad comparison vs torchvision CPU: 48-case matrix (3×3/1×1/1×3 × stride × pad × dilation × mask) + trap extras (asym-everything, bias=None → grad must be `None`, N=1 odd channels, offsets ×8 for the col2im ±2 window guard and coord `-2` sentinel, 33×35 s=2 smoke, skipped dg=2 placeholder) + a non-scalar upstream-grad case (constant `sum()` grad_output can hide GEMM transposition bugs). Per-grad tolerances: grad_input 2e-3 (atomic scatter), the rest held 1e-4.
+- Gradcheck, three layers: fp64 CPU reference (kept); fp32 through the native path (eps 1e-3, atol/rtol 1e-2, `nondet_tol` 1e-3 for the atomic scatter, offsets ≥ 0.1 from bilinear kinks); a CPU-fp32 calibration twin with identical case/knobs so knob problems fail there, not as bogus native failures. Expected fp32 UserWarnings filtered.
+- Training-loop convergence (`tests/test_training.py`): teacher–student, DCNv1 + DCNv2, Adam 150 steps, final loss < 0.1× initial, first 5 steps track an identically-initialised CPU run within 25%.
+- Pre-flip gate fix: routing now requires `groups == 1 and deformable_groups == 1` (inferred from shapes as torchvision does; groups was hardcoded 1, and dg=2 inference had silently routed native). Then `_BACKWARD_READY = True` as its own commit; full unforced regression green.
+- Post-flip follow-ups: `test_grad_call_routes_native` (grad_fn assert guards the gate); `example02` retargeted from torchvision to the package (its CPU-vs-MPS check had been comparing the CPU fallback with itself — diffs exactly 0.0); diag ladder "Next:" pointers updated.
 
 ## Phase 5 — Packaging & performance ⬜ Not started
 
 - `benchmarks/bench.py`: MPS native vs CPU-fallback timings.
 - README install/usage polish, pin tested torch/torchvision versions.
-- Optional: precompiled `.metallib`, threadgroup tuning, channels-last, `groups` / `deformable_groups` beyond 1 (forward currently hardcodes `groups = 1` in `ops.py`), half precision.
+- Optional: precompiled `.metallib`, threadgroup tuning, channels-last, `groups` / `deformable_groups` beyond 1 (kernels assume 1; `ops.py` routes such calls to the fallback — lift `native_capable` once they land), half precision.
 
 ---
 

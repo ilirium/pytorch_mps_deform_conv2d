@@ -103,5 +103,5 @@ until Phase 5. `DCN_MPS_FORCE_NATIVE=1` bypasses the gating for testing.
 - **Phase 1** — native forward (`im2col` → matmul → bias). ✅
 - **Phase 2** — forward tests vs torchvision. ✅
 - **Phase 3** — native backward (`col2im`, `col2im_coord`). ✅
-- **Phase 4** — backward tests + gradcheck
+- **Phase 4** — backward tests + gradcheck. ✅
 - **Phase 5** — packaging, perf tuning, groups / half precision

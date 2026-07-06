@@ -1,0 +1,47 @@
+% make test-backward-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q tests/test_backward.py tests/test_training.py
+.........................................................s........                                                                                                                                                                     [100%]
+65 passed, 1 skipped in 4.53s
+
+
+% make examples
+python3 example/example01_deform_conv2d_cpu_mps.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+  [ cpu]    0.076 ms/iter   (    3.8 ms total)
+  [ mps]    0.152 ms/iter   (    7.6 ms total)
+
+  MPS vs CPU: 0.50x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)
+python3 example/example02_deform_conv2d_gradcheck.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+output spatial size: 5x5
+
+=== Check 1: CPU vs MPS backward agreement ===
+  forward   max|CPU-MPS| = 4.768e-07
+  grad input  max|CPU-MPS| = 1.237e-06  ok (tol 2e-03)
+  grad weight max|CPU-MPS| = 4.768e-07  ok (tol 1e-04)
+  grad bias   max|CPU-MPS| = 0.000e+00  ok (tol 1e-04)
+  grad offset max|CPU-MPS| = 9.537e-07  ok (tol 1e-04)
+  grad mask   max|CPU-MPS| = 9.537e-07  ok (tol 1e-04)
+  => PASS
+
+=== Check 2: autograd.gradcheck (CPU, float64) ===
+  => PASS

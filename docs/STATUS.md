@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-07-06
 
-**Overall:** Phases 0–3 done — the native forward is live for inference (`_FORWARD_READY = True`), and the **native backward is implemented and passing the full diag ladder** (2026-07-06, `Implementing_Phase3_004_good.txt`): all five grads match torchvision CPU autograd end to end. Training still routes to the torchvision fallback (`_BACKWARD_READY = False`) until Phase 4 gradchecks it and flips the flag. Next: Phase 4 (backward correctness tests).
+**Overall:** Phases 0–4 done — **native forward AND backward are live by default on MPS** (`_FORWARD_READY = _BACKWARD_READY = True`, flipped 2026-07-06 after `Implementing_Phase4_005_good.txt`). Backward verified on-device: 48-case per-grad matrix + trap extras vs the torchvision CPU reference, fp32 gradcheck through the native path (with a CPU-calibrated twin), fp64 CPU gradcheck, and a training-loop convergence test. `groups > 1` / `deformable_groups > 1` route to the torchvision fallback until Phase 5. Next: Phase 5 (groups/dg > 1, perf, packaging).
 
 ## Phase overview
 
@@ -12,7 +12,7 @@
 | 1 | Native forward (`im2col` → matmul → bias) | ✅ Done (all 6 `make diag` stages pass on-device) |
 | 2 | Forward correctness tests vs torchvision | ✅ Done (60 native cases pass; forward enabled for inference) |
 | 3 | Native backward (`col2im`, `col2im_coord`) | ✅ Done (all 4 `diag_col2im` stages pass on-device; gated off pending Phase 4) |
-| 4 | Backward tests + gradcheck | ⬜ Not started |
+| 4 | Backward tests + gradcheck | ✅ Done (65 forced-native cases incl. gradcheck + training loop; `_BACKWARD_READY = True`) |
 | 5 | Packaging, perf, groups / half precision | ⬜ Not started |
 
 ## What works today
@@ -20,15 +20,17 @@
 - Build system (`setup.py` + Makefile), packaging, repo layout — complete.
 - Metal pipeline validated end to end: `add_one` kernel compiles, dispatches through `torch::mps`, registers under the MPS dispatch key.
 - Python API (`deform_conv2d`, `DeformConv2d`) complete and torchvision-compatible.
-- **Native forward live for inference on MPS**: `_FORWARD_READY = True` with autograd-safe routing — native only when no input requires grad (or grad mode is off); grad-requiring calls use the torchvision fallback until Phase 3/4. `DCN_MPS_FORCE_NATIVE=1` bypasses the gating for testing.
+- **Native forward and backward live by default on MPS**: inference AND training route natively (`_FORWARD_READY = _BACKWARD_READY = True`). Routing gates on capability too — `groups == 1` and `deformable_groups == 1` (inferred from shapes as torchvision does); anything else falls back to torchvision until Phase 5. `DCN_MPS_FORCE_NATIVE=1` bypasses all gating for testing; `test_grad_call_routes_native` guards the gate.
 - **Forward verified vs torchvision CPU reference** (`make test-forward-native`, rtol/atol=1e-4): 48-case matrix (3 kernels × stride × pad × dilation × mask) + hand-picked extras — non-square input with asymmetric stride/pad/dilation and 1×3 kernel, bias=None, N=1 with odd channels, offsets ×8 (out-of-bounds bilinear), 2×8×33×35 s=2 smoke case. No kernel bugs found; the Phase 1 port was correct as-is.
-- **Native backward implemented** (Phase 3): `deformable_col2im` (atomic scatter → grad_input) and `deformable_col2im_coord` (→ grad_offset/grad_mask) Metal kernels, fused `deform_conv2d_backward` host op (grad_weight/grad_bias via ATen GEMM/sum), and `_DeformConv2dFunction.backward()` wired to it. `DCN_MPS_FORCE_NATIVE=1` runs training natively end to end.
+- **Native backward implemented** (Phase 3): `deformable_col2im` (atomic scatter → grad_input) and `deformable_col2im_coord` (→ grad_offset/grad_mask) Metal kernels, fused `deform_conv2d_backward` host op (grad_weight/grad_bias via ATen GEMM/sum), and `_DeformConv2dFunction.backward()` wired to it.
+- **Backward verified** (Phase 4, `make test-backward-native`): 48-case per-grad matrix (3 kernels × stride × pad × dilation × mask) + trap extras (asym-everything, bias=None, N=1 odd channels, offsets ×8, 33×35 s=2 smoke) + non-scalar upstream grad, per-grad tolerances (grad_input 2e-3 atomic scatter, rest 1e-4); fp32 gradcheck through the native path (eps 1e-3, tol 1e-2, nondet_tol 1e-3, CPU-fp32-calibrated twin test); fp64 CPU gradcheck; training-loop convergence (teacher–student, Adam, 150 steps, first steps track an identically-initialised CPU run).
 - Full `make diag` passes: forward ladder (6 stages) + backward ladder (`tests/diag_col2im.py`, stages 0–4 incl. all-five-grads smoke vs torchvision CPU at rtol 2e-3).
+- `example02` now cross-checks the native backward against the CPU reference (it previously targeted torchvision directly).
 
 ## What's missing
 
-- Backward not yet gradchecked / correctness-tested beyond the diag smoke (`_BACKWARD_READY = False`; training still falls back by default). `tests/test_backward.py` markers still expect `NotImplementedError` xfails — they xpass under the force flag now; fixing them is Phase 4.
-- `groups > 1` and `deformable_groups > 1` untested (dg=2 kept visible as a skipped test until Phase 5; dg wiring verified off-device only).
+- `groups > 1` and `deformable_groups > 1` unimplemented in the kernels — routed to the torchvision fallback (dg=2 kept visible as a skipped test until Phase 5; dg wiring verified off-device only).
+- Perf untuned; packaging polish (Phase 5).
 
 ## Phase 1 implementation notes (2026-07-05)
 
@@ -56,10 +58,19 @@
 - Atomic scatter tolerance: grad_input comparisons use rtol 2e-3 (float atomic add order varies run to run); the coord kernel is deterministic → forward-level 1e-4.
 - `make diag-backward` runs the backward ladder alone; `make diag` runs both.
 
+## Phase 4 implementation notes (2026-07-06)
+
+- Landed in six logged increments (`Implementing_Phase4_001…006`), each green first try — no kernel changes were needed; Phase 3's diag ladder had already caught everything:
+  1. `make test-backward-native` target + stale docstring cleanup; baseline green (001).
+  2. Per-grad matrix + extras + non-scalar upstream grad (`sum()`'s constant grad_output can hide GEMM transposition bugs). The deterministic grads (offset/mask/weight/bias) held the forward-level 1e-4 — no tolerance calibration needed (002).
+  3. fp32 gradcheck: the plan's riskiest unknown, passed with the planned knobs on both the CPU-fp32 calibration twin and the native path (003). Offsets kept ≥ 0.1 from integer grid points; expected "not double precision" UserWarnings filtered.
+  4. Training-loop convergence, DCNv1 + DCNv2 (004).
+  5. **Pre-flip gate fix:** the routing never checked groups/dg — dg=2 *inference* already routed native unverified, and the flip would have added dg=2 training. Now `groups == 1 and deformable_groups == 1` is required for unforced native routing (groups inferred from shapes as torchvision does; was hardcoded 1). Then the flip itself, as its own commit; full unforced regression green (005).
+  6. Post-flip follow-ups the regression surfaced: `test_grad_call_routes_native` (grad_fn assert guards the gate); `example02` had been importing torchvision directly, so its "CPU vs MPS" check compared the CPU fallback with itself (max diffs exactly 0.0) — retargeted at the package, real cross-check now (006).
+
 ## Next actions
 
-1. Phase 4: run `DCN_MPS_FORCE_NATIVE=1 pytest tests/test_backward.py`, fix the xfail markers (they xpass now), add per-grad comparisons + fp32 gradcheck vs CPU, confirm a small training loop converges; flip `_BACKWARD_READY = True` when green.
-2. Phase 5: groups / deformable_groups > 1, perf, packaging.
+1. Phase 5: groups / deformable_groups > 1 (lift the capability gate in `ops.py` once kernels support them), perf, packaging.
 
 ## Environment / constraints
 
