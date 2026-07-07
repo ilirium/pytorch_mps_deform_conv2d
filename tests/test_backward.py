@@ -224,6 +224,24 @@ def test_grad_call_routes_native():
         "native backward is not the default")
 
 
+@requires_mps()
+def test_grad_call_routes_native_groups2_dg2():
+    """groups=2 + dg=2 route native without the force flag (Phase 5).
+
+    Inverts Phase 4's capability gate: these shapes used to fall back to
+    torchvision; since the Step 4 gate lift they must hit the native
+    autograd.Function. groups/dg are inferred from weight.size(1) / offset
+    channels, so a regression in the inference lines fails here too.
+    """
+    x = torch.randn(1, 4, 5, 5, device="mps", requires_grad=True)
+    w = torch.randn(4, 2, 3, 3, device="mps")           # groups = 4/2 = 2
+    o = torch.randn(1, 2 * 2 * 9, 3, 3, device="mps")   # dg = 2
+    out = deform_conv2d(x, o, w)
+    assert type(out.grad_fn).__name__ == "_DeformConv2dFunctionBackward", (
+        f"groups=2/dg=2 grad call routed to {type(out.grad_fn).__name__} — "
+        "the Phase 5 capability-gate lift has regressed")
+
+
 # ---------------------------------------------------------------------------
 # Gradcheck
 # ---------------------------------------------------------------------------
@@ -321,8 +339,7 @@ def test_gradcheck_cpu_fp32_calibration_grouped(groups, dg):
 def test_gradcheck_native_fp32_grouped(groups, dg):
     """fp32 gradcheck through the native path with groups=2 / dg=2.
 
-    Run with DCN_MPS_FORCE_NATIVE=1; unforced it exercises the fallback
-    until the Step 4 gate lift.
+    Since the Step 4 gate lift these route native unforced as well.
     """
     _run_fp32_gradcheck(deform_conv2d, "mps", True, groups=groups, dg=dg)
 

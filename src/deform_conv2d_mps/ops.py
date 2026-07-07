@@ -6,8 +6,8 @@ Behaviour:
   * Training on MPS (any input requires grad) runs the native Metal
     backward (Phase 4: per-grad comparison vs the CPU reference, fp32
     gradcheck, training-loop convergence).
-  * groups > 1 or deformable_groups > 1 fall back to torchvision until
-    Phase 5.
+  * groups > 1 and deformable_groups > 1 run natively too (Phase 5:
+    grouped GEMMs + dg-indexed kernels verified on-device).
   * Non-MPS devices always use the torchvision fallback.
 """
 
@@ -20,9 +20,10 @@ from typing import Optional, Tuple
 import torch
 from torch import Tensor
 
-# Set DCN_MPS_FORCE_NATIVE=1 to bypass ALL gating (readiness AND the
-# groups/dg capability check) and exercise the native path unconditionally
-# (testing/diagnostics; the kernels assume groups == 1, dg == 1 until Phase 5).
+# Set DCN_MPS_FORCE_NATIVE=1 to bypass the readiness gating and exercise the
+# native path unconditionally (testing/diagnostics). Since the Phase 5
+# capability-gate lift, unforced routing differs only via _FORWARD_READY /
+# _BACKWARD_READY; the flag stays as the knob for testing future gates.
 _FORCE_NATIVE = os.environ.get("DCN_MPS_FORCE_NATIVE", "0") == "1"
 
 _FORWARD_READY = True   # Phase 2 (2026-07-05): forward verified on-device.
@@ -141,21 +142,21 @@ def deform_conv2d(
     padding = _pair(padding)
     dilation = _pair(dilation)
 
-    # Native routing needs both capability (the kernels only implement
-    # groups == 1 and deformable_groups == 1 until Phase 5) and readiness
-    # (_FORWARD_READY / _BACKWARD_READY, i.e. what the tests have verified).
-    # _FORCE_NATIVE bypasses ALL of it for testing/diagnostics.
+    # Native routing is gated on readiness only (_FORWARD_READY /
+    # _BACKWARD_READY, i.e. what the tests have verified). The Phase 4
+    # capability gate (groups == 1 and deformable_groups == 1) was lifted in
+    # Phase 5: grouped GEMMs and the dg-indexed kernels are verified
+    # on-device. groups / deformable_groups are still inferred from shapes,
+    # as torchvision does — the values get passed to the native ops.
     kh, kw = weight.shape[-2], weight.shape[-1]
     groups = input.shape[1] // weight.shape[1]  # inferred as torchvision does
     deformable_groups = offset.shape[1] // (2 * kh * kw)
-    native_capable = groups == 1 and deformable_groups == 1
     needs_grad = torch.is_grad_enabled() and any(
         t is not None and t.requires_grad
         for t in (input, weight, offset, mask, bias))
     use_native = input.device.type == "mps" and (
         _FORCE_NATIVE
-        or (native_capable and _FORWARD_READY
-            and (not needs_grad or _BACKWARD_READY)))
+        or (_FORWARD_READY and (not needs_grad or _BACKWARD_READY)))
     if use_native:
         return _DeformConv2dFunction.apply(
             input, weight, offset, mask, bias,

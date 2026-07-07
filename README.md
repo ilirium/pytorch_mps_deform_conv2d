@@ -17,8 +17,9 @@ forces slow `.cpu()` round-trips. This package provides the missing kernel,
 > training run the native Metal kernels: forward verified against the
 > torchvision CPU reference (Phase 2, 2026-07-05), backward verified via
 > per-grad comparison, fp32 gradcheck, and training-loop convergence
-> (Phase 4, 2026-07-06). `groups > 1` / `deformable_groups > 1` fall back
-> to torchvision until Phase 5, as do non-MPS devices always.
+> (Phase 4, 2026-07-06). `groups > 1` and `deformable_groups > 1` run
+> natively too (Phase 5, 2026-07-07: grouped GEMMs + dg-indexed kernels,
+> verified on-device). Non-MPS devices always use the torchvision fallback.
 > See `IMPLEMENTATION_PLAN.md` for the full roadmap.
 
 ## PyTorch and Torchvision version
@@ -88,14 +89,15 @@ IMPLEMENTATION_PLAN.md     phased roadmap and design rationale
 pytest -q                          # full suite (native forward + backward on MPS)
 make test-forward-native           # forward tests forced onto the native kernel
 make test-backward-native          # backward + training tests, forced native
-DCN_MPS_FORCE_NATIVE=1 pytest -q   # bypass all gating (incl. groups/dg check)
+DCN_MPS_FORCE_NATIVE=1 pytest -q   # force the native path (bypass readiness gating)
 python benchmarks/bench.py
 ```
 
 Native routing is gated in `src/deform_conv2d_mps/ops.py`: MPS calls run
-native (`_FORWARD_READY` / `_BACKWARD_READY`, both flipped) unless
-`groups > 1` or `deformable_groups > 1`, which fall back to torchvision
-until Phase 5. `DCN_MPS_FORCE_NATIVE=1` bypasses the gating for testing.
+native (`_FORWARD_READY` / `_BACKWARD_READY`, both flipped); the Phase 4
+groups/dg capability gate was lifted in Phase 5, so `groups > 1` and
+`deformable_groups > 1` route native as well. `DCN_MPS_FORCE_NATIVE=1`
+bypasses the readiness gating for testing.
 
 ### Roadmap (see IMPLEMENTATION_PLAN.md)
 
