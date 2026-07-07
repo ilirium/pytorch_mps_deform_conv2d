@@ -1,0 +1,103 @@
+% make test
+python3 -m pytest -q
+..............................................................................................................................................................                                                                         [100%]
+158 passed in 5.05s
+
+
+% make test-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q
+..............................................................................................................................................................                                                                         [100%]
+158 passed in 4.78s
+
+
+% make diag
+python3 tests/diag_im2col.py
+PASS  stage1 unfold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 unfold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 unfold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 constant offset +0.5, use_mask=0
+PASS  stage3 random offsets + mask
+PASS  stage3b full forward (N=2, bias) vs torchvision CPU
+PASS  stage4 dg=2 C=4 distinct const offset per group
+PASS  stage4 dg=2 C=6 distinct const offset per group
+PASS  stage4 dg=4 C=4 distinct const offset per group
+PASS  stage4b dg=2 C=6 random offsets + mask
+
+All stages passed. Forward is live incl. dg > 1 (Phase 5); regression: make test-forward-native.
+python3 tests/diag_col2im.py
+PASS  stage0 atomic_smoke n=100000
+PASS  stage1 fold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 fold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 fold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 grad_input const offset (0.3, -0.6), no mask
+PASS  stage2b grad_input random offsets + mask
+PASS  stage2c grad_input dg=2 C=6 random offsets + mask
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_offset
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_mask
+PASS  stage3b C=2 k=3 no-mask grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_mask
+PASS  stage3d dg=2 C=6 (mask) grad_offset
+PASS  stage3d dg=2 C=6 (mask) grad_mask
+PASS  stage3e dg=2 C=4 no-mask grad_offset
+PASS  stage4 DCNv2 (mask + bias) forward parity
+PASS  stage4 DCNv2 (mask + bias) grad_input
+PASS  stage4 DCNv2 (mask + bias) grad_weight
+PASS  stage4 DCNv2 (mask + bias) grad_offset
+PASS  stage4 DCNv2 (mask + bias) grad_mask
+PASS  stage4 DCNv2 (mask + bias) grad_bias
+PASS  stage4b DCNv1 (no mask, no bias) forward parity
+PASS  stage4b DCNv1 (no mask, no bias) grad_input
+PASS  stage4b DCNv1 (no mask, no bias) grad_weight
+PASS  stage4b DCNv1 (no mask, no bias) grad_offset
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) forward parity
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_input
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_weight
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_offset
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_mask
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_bias
+
+All stages passed. Backward is live incl. dg > 1 (Phase 5); regression: make test-backward-native.
+
+
+% make examples
+python3 example/example01_deform_conv2d_cpu_mps.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+output spatial size: 10x12
+
+=== functional API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+=== module API ===
+  [ cpu] ok   shape=(2, 6, 10, 12) mean=-0.70549
+  [ mps] ok   shape=(2, 6, 10, 12) mean=-0.70549
+
+functional: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+    module: max|CPU-MPS| = 1.431e-06  allclose(atol=1e-4) = True
+
+=== timing (functional, lower is better) ===
+  [ cpu]    0.078 ms/iter   (    3.9 ms total)
+  [ mps]    0.166 ms/iter   (    8.3 ms total)
+
+  MPS vs CPU: 0.47x  ->  CPU faster  (note: tiny tensors often favor CPU due to dispatch overhead)
+python3 example/example02_deform_conv2d_gradcheck.py
+torch 2.14.0.dev20260622
+torchvision 0.29.0.dev20260622
+MPS available: True
+output spatial size: 5x5
+
+=== Check 1: CPU vs MPS backward agreement ===
+  forward   max|CPU-MPS| = 4.768e-07
+  grad input  max|CPU-MPS| = 1.237e-06  ok (tol 2e-03)
+  grad weight max|CPU-MPS| = 4.768e-07  ok (tol 1e-04)
+  grad bias   max|CPU-MPS| = 0.000e+00  ok (tol 1e-04)
+  grad offset max|CPU-MPS| = 9.537e-07  ok (tol 1e-04)
+  grad mask   max|CPU-MPS| = 9.537e-07  ok (tol 1e-04)
+  => PASS
+
+=== Check 2: autograd.gradcheck (CPU, float64) ===
+  => PASS
