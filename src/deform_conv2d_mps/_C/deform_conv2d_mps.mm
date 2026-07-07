@@ -170,16 +170,22 @@ at::Tensor atomic_smoke(const at::Tensor& input) {
 }
 
 // ---------------------------------------------------------------------------
-// Forward: deformable im2col (Metal) -> GEMM (ATen mm) -> bias.
+// Forward: deformable im2col (Metal) -> grouped GEMM (ATen bmm) -> bias.
 //
-// Phase-1 scope: groups == 1, fp32, contiguous NCHW. Per batch element:
-// dispatch deformable_im2col into a reused column buffer, then
-// out[n] = weight.view({outC, -1}).mm(columns).view({outC, out_h, out_w}).
+// Scope: fp32, contiguous NCHW. Per batch element: dispatch deformable_im2col
+// into a reused column buffer (the kernel fills all C channels regardless of
+// groups — it only knows about deformable_groups), then the grouped GEMM
+// (Phase 5): view columns as (groups, C/groups*kh*kw, out_hw) — the buffer is
+// channel-major, so each group's row block is contiguous — view weight as
+// (groups, outC/groups, C/groups*kh*kw), and at::bmm in one dispatch. Both
+// are views of contiguous buffers (view() throws rather than copies, so a
+// silent per-batch copy can't sneak in). groups == 1 degenerates to the old
+// weight.view({outC, -1}).mm(columns).
 //
 // Threading note: ATen MPS ops synchronize on the same serial dispatch queue
-// we use for encoding, so the `mm` MUST NOT run inside our dispatch_sync
+// we use for encoding, so the `bmm` MUST NOT run inside our dispatch_sync
 // block (deadlock). Each iteration encodes + commits the im2col, then calls
-// `mm` from the caller's thread; both enqueue on the same MPS stream, so
+// `bmm` from the caller's thread; both enqueue on the same MPS stream, so
 // ordering is preserved. The command buffer is re-fetched every iteration
 // because commits recycle it.
 // ---------------------------------------------------------------------------
@@ -204,8 +210,7 @@ at::Tensor deform_conv2d_forward(
     TORCH_CHECK(input.dim() == 4, "input must be 4-D (N, C, H, W), got ", input.dim());
     TORCH_CHECK(weight.dim() == 4, "weight must be 4-D (outC, C/groups, kh, kw), got ", weight.dim());
     TORCH_CHECK(offset.dim() == 4, "offset must be 4-D (N, 2*dg*kh*kw, oh, ow), got ", offset.dim());
-    TORCH_CHECK(groups == 1,
-                "deform_conv2d_forward: groups != 1 not supported yet (Phase 5), got ", groups);
+    TORCH_CHECK(groups > 0, "groups must be positive, got ", groups);
     TORCH_CHECK(stride_h > 0 && stride_w > 0, "stride must be positive");
     TORCH_CHECK(dilation_h > 0 && dilation_w > 0, "dilation must be positive");
 
@@ -218,6 +223,10 @@ at::Tensor deform_conv2d_forward(
     TORCH_CHECK(w.size(1) * groups == C,
                 "weight shape mismatch: expected in-channels ", C,
                 ", got ", w.size(1) * groups);
+    TORCH_CHECK(C % groups == 0, "channels (", C,
+                ") not divisible by groups (", groups, ")");
+    TORCH_CHECK(outC % groups == 0, "out_channels (", outC,
+                ") not divisible by groups (", groups, ")");
 
     const int64_t out_h =
         (H + 2 * pad_h - dilation_h * (kh - 1) - 1) / stride_h + 1;
@@ -300,7 +309,14 @@ at::Tensor deform_conv2d_forward(
 
     id<MTLComputePipelineState> pso = pipeline_for("deformable_im2col");
     dispatch_queue_t q = torch::mps::get_dispatch_queue();
-    auto w2d = w.view({outC, C * kh * kw});
+
+    // Grouped GEMM views (Phase 5). Both `w` and `columns` are contiguous and
+    // channel-major, so these are zero-copy views: w (outC, C/g, kh, kw) ->
+    // (g, outC/g, C/g*kh*kw); columns (C*kh*kw, out_hw) -> (g, C/g*kh*kw,
+    // out_hw). view() would throw if a copy were ever needed.
+    const int64_t cpg_kk = (C / groups) * kh * kw;  // rows per group
+    auto w_g = w.view({groups, outC / groups, cpg_kk});
+    auto cols_g = columns.view({groups, cpg_kk, out_hw});
 
     // --- Steps 3 & 4: per-batch im2col dispatch + interleaved GEMM ------------
     for (int64_t n = 0; n < N; ++n) {
@@ -344,9 +360,11 @@ at::Tensor deform_conv2d_forward(
             }
         });
 
-        // GEMM for image n — outside the dispatch block (see threading note).
-        // Enqueues on the same MPS stream, after the im2col above.
-        auto out_n = w2d.mm(columns);                     // (outC, out_hw)
+        // Grouped GEMM for image n — outside the dispatch block (threading
+        // note above; bmm follows the same serial-queue rule as mm). Enqueues
+        // on the same MPS stream, after the im2col above. One dispatch for
+        // all groups: (g, outC/g, cpg_kk) @ (g, cpg_kk, out_hw).
+        auto out_n = at::bmm(w_g, cols_g);                // (g, outC/g, out_hw)
         output.select(0, n).copy_(out_n.view({outC, out_h, out_w}));
     }
 

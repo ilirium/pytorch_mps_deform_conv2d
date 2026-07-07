@@ -1,0 +1,60 @@
+% make diag
+python3 tests/diag_im2col.py
+PASS  stage1 unfold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 unfold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 unfold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 constant offset +0.5, use_mask=0
+PASS  stage3 random offsets + mask
+PASS  stage3b full forward (N=2, bias) vs torchvision CPU
+PASS  stage4 dg=2 C=4 distinct const offset per group
+PASS  stage4 dg=2 C=6 distinct const offset per group
+PASS  stage4 dg=4 C=4 distinct const offset per group
+PASS  stage4b dg=2 C=6 random offsets + mask
+
+All stages passed. Forward is live incl. dg > 1 (Phase 5); regression: make test-forward-native.
+python3 tests/diag_col2im.py
+PASS  stage0 atomic_smoke n=100000
+PASS  stage1 fold parity C=1 3x3 k=2x2 s=(1, 1) p=(0, 0) d=(1, 1)
+PASS  stage1 fold parity C=2 5x5 k=3x3 s=(1, 1) p=(1, 1) d=(1, 1)
+PASS  stage1 fold parity C=3 8x7 k=3x2 s=(2, 1) p=(1, 0) d=(1, 2)
+PASS  stage2 grad_input const offset (0.3, -0.6), no mask
+PASS  stage2b grad_input random offsets + mask
+PASS  stage2c grad_input dg=2 C=6 random offsets + mask
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_offset
+PASS  stage3 tiny C=1 k=2 5x5 (mask) grad_mask
+PASS  stage3b C=2 k=3 no-mask grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_offset
+PASS  stage3c C=3 stride/dil asym (mask) grad_mask
+PASS  stage3d dg=2 C=6 (mask) grad_offset
+PASS  stage3d dg=2 C=6 (mask) grad_mask
+PASS  stage3e dg=2 C=4 no-mask grad_offset
+PASS  stage4 DCNv2 (mask + bias) forward parity
+PASS  stage4 DCNv2 (mask + bias) grad_input
+PASS  stage4 DCNv2 (mask + bias) grad_weight
+PASS  stage4 DCNv2 (mask + bias) grad_offset
+PASS  stage4 DCNv2 (mask + bias) grad_mask
+PASS  stage4 DCNv2 (mask + bias) grad_bias
+PASS  stage4b DCNv1 (no mask, no bias) forward parity
+PASS  stage4b DCNv1 (no mask, no bias) grad_input
+PASS  stage4b DCNv1 (no mask, no bias) grad_weight
+PASS  stage4b DCNv1 (no mask, no bias) grad_offset
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) forward parity
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_input
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_weight
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_offset
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_mask
+PASS  stage4c dg=2 C=6 DCNv2 (mask + bias) grad_bias
+
+All stages passed. Backward is live incl. dg > 1 (Phase 5); regression: make test-backward-native.
+
+
+% make test-forward-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q tests/test_forward.py
+.................................................................                                                                                                                                                                      [100%]
+65 passed in 1.56s
+
+
+% make test-backward-native
+DCN_MPS_FORCE_NATIVE=1 python3 -m pytest -q tests/test_backward.py tests/test_training.py
+.......................................................................                                                                                                                                                                [100%]
+71 passed in 3.66s
