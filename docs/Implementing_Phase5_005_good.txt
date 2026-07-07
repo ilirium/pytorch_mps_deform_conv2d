@@ -1,0 +1,23 @@
+% make bench
+python3 benchmarks/bench.py
+torch 2.14.0.dev20260622  torchvision 0.29.0.dev20260622  mps_available=True
+PYTORCH_ENABLE_MPS_FALLBACK=1
+impls: native = this package on MPS | fallback = torchvision on MPS tensors (CPU round-trip) | cpu = torchvision on CPU tensors
+
+[       8x64x64x64 k3] fwd    native      2.94  fallback      2.31  cpu    166.24  (ms/iter)
+/Users/ilirium/Dev/mambaforge/envs/ptn/lib/python3.14/site-packages/torch/autograd/graph.py:979: UserWarning: The operator 'torchvision::_deform_conv2d_backward' is not currently supported on the MPS backend and will fall back to run on the CPU. This may have performance implications. (Triggered internally at /Users/runner/work/pytorch/pytorch/aten/src/ATen/mps/MPSFallback.mm:34.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+[       8x64x64x64 k3] fwdbwd native     57.44  fallback    822.59  cpu    974.74  (ms/iter)
+[    2x256x100x152 k3] fwd    native     17.12  fallback     19.99  cpu    386.72  (ms/iter)
+[    2x256x100x152 k3] fwdbwd native    208.42  fallback   2835.91  cpu   3140.48  (ms/iter)
+[   8x64x64x64 k3 g32] fwd    native      2.60  fallback      2.10  cpu    165.27  (ms/iter)
+[   8x64x64x64 k3 g32] fwdbwd native     57.82  fallback    832.81  cpu    986.49  (ms/iter)
+
+| shape | pass | native MPS (ms) | MPS fallback (ms) | pure CPU (ms) | native vs fallback | native vs CPU |
+|---|---|---|---|---|---|---|
+| 8x64x64x64 k3 | forward | 2.94 | 2.31 | 166.24 | 0.8x | 56.6x |
+| 8x64x64x64 k3 | fwd+bwd | 57.44 | 822.59 | 974.74 | 14.3x | 17.0x |
+| 2x256x100x152 k3 | forward | 17.12 | 19.99 | 386.72 | 1.2x | 22.6x |
+| 2x256x100x152 k3 | fwd+bwd | 208.42 | 2835.91 | 3140.48 | 13.6x | 15.1x |
+| 8x64x64x64 k3 g32 | forward | 2.60 | 2.10 | 165.27 | 0.8x | 63.5x |
+| 8x64x64x64 k3 g32 | fwd+bwd | 57.82 | 832.81 | 986.49 | 14.4x | 17.1x |

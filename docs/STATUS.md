@@ -1,8 +1,8 @@
 # Project Status — deform_conv2d for PyTorch MPS
 
-**Last updated:** 2026-07-06
+**Last updated:** 2026-07-07
 
-**Overall:** Phases 0–4 done — **native forward AND backward are live by default on MPS** (`_FORWARD_READY = _BACKWARD_READY = True`, flipped 2026-07-06 after `Implementing_Phase4_005_good.txt`). Backward verified on-device: 48-case per-grad matrix + trap extras vs the torchvision CPU reference, fp32 gradcheck through the native path (with a CPU-calibrated twin), fp64 CPU gradcheck, and a training-loop convergence test. `groups > 1` / `deformable_groups > 1` route to the torchvision fallback until Phase 5. Next: Phase 5 (groups/dg > 1, perf, packaging).
+**Overall:** Phases 0–4 done; Phase 5 Steps 1–5 done — **native forward AND backward are live by default on MPS for the full parameter range** (fp32, NCHW), including `groups > 1` and `deformable_groups > 1` (capability gate lifted 2026-07-07 after `Implementing_Phase5_004_good.txt`; 158 tests pass identically forced and unforced). Perf baseline measured and recorded below (`Implementing_Phase5_005_good.txt`): **~14x faster training than the MPS fallback path** across all benched shapes. Remaining: Step 6 packaging polish.
 
 ## Phase overview
 
@@ -13,14 +13,14 @@
 | 2 | Forward correctness tests vs torchvision | ✅ Done (60 native cases pass; forward enabled for inference) |
 | 3 | Native backward (`col2im`, `col2im_coord`) | ✅ Done (all 4 `diag_col2im` stages pass on-device; gated off pending Phase 4) |
 | 4 | Backward tests + gradcheck | ✅ Done (65 forced-native cases incl. gradcheck + training loop; `_BACKWARD_READY = True`) |
-| 5 | Packaging, perf, groups / half precision | ⬜ Not started |
+| 5 | groups/dg > 1, perf baseline, packaging | 🔶 Steps 1–5 done (gate lifted, 158 tests, bench recorded); Step 6 packaging remains |
 
 ## What works today
 
 - Build system (`setup.py` + Makefile), packaging, repo layout — complete.
 - Metal pipeline validated end to end: `add_one` kernel compiles, dispatches through `torch::mps`, registers under the MPS dispatch key.
 - Python API (`deform_conv2d`, `DeformConv2d`) complete and torchvision-compatible.
-- **Native forward and backward live by default on MPS**: inference AND training route natively (`_FORWARD_READY = _BACKWARD_READY = True`). Routing gates on capability too — `groups == 1` and `deformable_groups == 1` (inferred from shapes as torchvision does); anything else falls back to torchvision until Phase 5. `DCN_MPS_FORCE_NATIVE=1` bypasses all gating for testing; `test_grad_call_routes_native` guards the gate.
+- **Native forward and backward live by default on MPS for the full range**: inference AND training route natively (`_FORWARD_READY = _BACKWARD_READY = True`), including `groups > 1` and `deformable_groups > 1` (Phase 5; the Phase 4 capability gate is lifted — groups/dg still inferred from shapes as torchvision does and passed through). `DCN_MPS_FORCE_NATIVE=1` bypasses the readiness gating for testing; `test_grad_call_routes_native` + its groups2_dg2 twin guard the routing in both directions.
 - **Forward verified vs torchvision CPU reference** (`make test-forward-native`, rtol/atol=1e-4): 48-case matrix (3 kernels × stride × pad × dilation × mask) + hand-picked extras — non-square input with asymmetric stride/pad/dilation and 1×3 kernel, bias=None, N=1 with odd channels, offsets ×8 (out-of-bounds bilinear), 2×8×33×35 s=2 smoke case. No kernel bugs found; the Phase 1 port was correct as-is.
 - **Native backward implemented** (Phase 3): `deformable_col2im` (atomic scatter → grad_input) and `deformable_col2im_coord` (→ grad_offset/grad_mask) Metal kernels, fused `deform_conv2d_backward` host op (grad_weight/grad_bias via ATen GEMM/sum), and `_DeformConv2dFunction.backward()` wired to it.
 - **Backward verified** (Phase 4, `make test-backward-native`): 48-case per-grad matrix (3 kernels × stride × pad × dilation × mask) + trap extras (asym-everything, bias=None, N=1 odd channels, offsets ×8, 33×35 s=2 smoke) + non-scalar upstream grad, per-grad tolerances (grad_input 2e-3 atomic scatter, rest 1e-4); fp32 gradcheck through the native path (eps 1e-3, tol 1e-2, nondet_tol 1e-3, CPU-fp32-calibrated twin test); fp64 CPU gradcheck; training-loop convergence (teacher–student, Adam, 150 steps, first steps track an identically-initialised CPU run).
@@ -29,8 +29,9 @@
 
 ## What's missing
 
-- `groups > 1` and `deformable_groups > 1` unimplemented in the kernels — routed to the torchvision fallback (dg=2 kept visible as a skipped test until Phase 5; dg wiring verified off-device only).
-- Perf untuned; packaging polish (Phase 5).
+- Packaging polish (Phase 5 Step 6): README install/usage/pins finalisation, `pyproject.toml` version bump + classifiers, docs sync.
+- Perf is *measured* but untuned — the baseline below is what any stretch perf work (threadgroup tuning, dispatch batching, precompiled `.metallib`) must beat; none of it blocks phase exit.
+- Half precision and channels-last: explicitly out of scope (stretch).
 
 ## Phase 1 implementation notes (2026-07-05)
 
@@ -68,9 +69,32 @@
   5. **Pre-flip gate fix:** the routing never checked groups/dg — dg=2 *inference* already routed native unverified, and the flip would have added dg=2 training. Now `groups == 1 and deformable_groups == 1` is required for unforced native routing (groups inferred from shapes as torchvision does; was hardcoded 1). Then the flip itself, as its own commit; full unforced regression green (005).
   6. Post-flip follow-ups the regression surfaced: `test_grad_call_routes_native` (grad_fn assert guards the gate); `example02` had been importing torchvision directly, so its "CPU vs MPS" check compared the CPU fallback with itself (max diffs exactly 0.0) — retargeted at the package, real cross-check now (006).
 
+## Phase 5 implementation notes (2026-07-07)
+
+- Landed per [PHASE5_PLAN.md](PHASE5_PLAN.md) in five logged increments (`Implementing_Phase5_001…005`), all green first try on-device:
+  1. **dg > 1 on-device** (001): zero kernel changes — the dg index math from Phase 1 was correct. Skipped dg=2 placeholders became real matrix cases (cpg=2, cpg=3 non-power-of-two, dg=C, asym, non-scalar upstream); diag ladders gained dg stages, incl. the distinct-constant-offset-per-group trick (a wrong `deformable_group_index` reads valid memory from the *wrong* group — plausible values, not NaN).
+  2. **groups > 1 forward** (002): host-side only — flat `mm` → `at::bmm` over zero-copy views (weight `(g, outC/g, C/g·kh·kw)`, columns `(g, C/g·kh·kw, out_hw)`; the column buffer is channel-major so group row-blocks are contiguous). `view()` throws rather than copies, so a silent per-batch copy can't sneak in. One GEMM dispatch per image; bmm outside `dispatch_sync` (same serial-queue rule as `mm`).
+  3. **groups > 1 backward** (003): same shape of change — `grad_columns = bmm(w_gᵀ, go_g)` viewed flat (col2im/col2im_coord consume the full-C buffer unchanged; groups never reaches them), `grad_weight` accumulated as `(g, outC/g, C/g·kh·kw)`. Grouped grad GEMMs verified off-device against a block-diagonal-weight ground truth before building. Backward matrix mirrors the forward cases + groups=2 non-scalar upstream grads (grouped-GEMM transposition errors hide under `sum()`); gradcheck groups=2/dg=2 with CPU calibration twins.
+  4. **Gate lift** (004): `native_capable` deleted from `ops.py`; 158 tests pass identically forced and unforced; `test_grad_call_routes_native_groups2_dg2` inverts Phase 4's gate test.
+  5. **Benchmarks** (005): `benchmarks/bench.py` extended — fwd+bwd timing with pre-made upstream grad, three shapes, three impls (native MPS / torchvision-on-MPS-tensors fallback / honest pure-CPU torchvision). Baseline below.
+
+### Perf baseline (2026-07-07, M-series, torch 2.14.0.dev20260622)
+
+| shape | pass | native MPS (ms) | MPS fallback (ms) | pure CPU (ms) | native vs fallback | native vs CPU |
+|---|---|---|---|---|---|---|
+| 8x64x64x64 k3 | forward | 2.94 | 2.31 | 166.24 | 0.8x | 56.6x |
+| 8x64x64x64 k3 | fwd+bwd | 57.44 | 822.59 | 974.74 | 14.3x | 17.0x |
+| 2x256x100x152 k3 | forward | 17.12 | 19.99 | 386.72 | 1.2x | 22.6x |
+| 2x256x100x152 k3 | fwd+bwd | 208.42 | 2835.91 | 3140.48 | 13.6x | 15.1x |
+| 8x64x64x64 k3 g32 | forward | 2.60 | 2.10 | 165.27 | 0.8x | 63.5x |
+| 8x64x64x64 k3 g32 | fwd+bwd | 57.82 | 832.81 | 986.49 | 14.4x | 17.1x |
+
+- **Reading the table honestly:** the bench run emitted a fallback warning only for `torchvision::_deform_conv2d_backward` — current torchvision nightlies appear to run the *forward* natively on MPS (fallback fwd ≈ native fwd, both ~70x off pure CPU), while the backward still round-trips through the CPU. So the package's payoff is **training: ~14x vs what MPS users otherwise get**; forward-only inference is roughly at parity with current nightlies (0.8–1.2x).
+- These numbers are the baseline any stretch perf work must beat. The obvious profiler target: native fwd+bwd is ~20x the forward cost (per-batch loop with im2col recompute, three GEMMs, and the atomic scatter) — but no tuning without a profiler-identified bottleneck.
+
 ## Next actions
 
-1. Phase 5: groups / deformable_groups > 1 (lift the capability gate in `ops.py` once kernels support them), perf, packaging.
+1. Phase 5 Step 6: packaging polish — README (install rationale, API statement, supported range, bench summary, tested pins), `pyproject.toml` version bump/classifiers, docs sync (PHASES.md Phase 5 → ✅).
 
 ## Environment / constraints
 

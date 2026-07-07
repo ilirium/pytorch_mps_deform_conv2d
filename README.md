@@ -68,6 +68,16 @@ y = m(x, offset, mask=mask)                            # module
 Signatures match torchvision exactly, so existing code and `state_dict`s are
 drop-in.
 
+## Performance (Phase 5 baseline, 2026-07-07)
+
+Training (forward+backward) runs **~14x faster** than the CPU-fallback path
+MPS users otherwise get, and 15–17x faster than pure-CPU torchvision
+(8×64×64×64 k3: 57 ms vs 823/975 ms per iter; groups=32 identical; detection-ish
+2×256×100×152: 208 ms vs 2836/3140 ms). Forward-only inference is roughly at
+parity with current torchvision nightlies, which run the forward natively on
+MPS but still fall back to the CPU for the backward. Full table and
+methodology: `docs/STATUS.md`; reproduce with `make bench`.
+
 ## Layout
 
 ```
