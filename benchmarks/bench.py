@@ -114,14 +114,32 @@ def main():
             print(f"[{name:>20s}] {mode:6s} native {nat_ms:9.2f}  "
                   f"fallback {fb_ms:9.2f}  cpu {cpu_ms:9.2f}  (ms/iter)")
 
-    # Markdown table for docs/STATUS.md / README.
-    print("\n| shape | pass | native MPS (ms) | MPS fallback (ms) | "
-          "pure CPU (ms) | native vs fallback | native vs CPU |")
-    print("|---|---|---|---|---|---|---|")
+    # Markdown table for docs/STATUS.md / README — columns padded so the
+    # plain-text output is readable as-is; the :--- / ---: markers keep the
+    # same alignment when rendered.
+    header = ["shape", "pass", "native MPS (ms)", "MPS fallback (ms)",
+              "pure CPU (ms)", "native vs fallback", "native vs CPU"]
+    align = ["<", "<", ">", ">", ">", ">", ">"]  # text left, numbers right
+    body = []
     for name, mode, nat, fb, cpu in rows:
         label = "forward" if mode == "fwd" else "fwd+bwd"
-        print(f"| {name} | {label} | {nat:.2f} | {fb:.2f} | {cpu:.2f} "
-              f"| {fb / nat:.1f}x | {cpu / nat:.1f}x |")
+        body.append([name, label, f"{nat:.2f}", f"{fb:.2f}", f"{cpu:.2f}",
+                     f"{fb / nat:.1f}x", f"{cpu / nat:.1f}x"])
+    widths = [max(len(r[i]) for r in [header] + body)
+              for i in range(len(header))]
+
+    def fmt_row(cells):
+        return "| " + " | ".join(
+            f"{c:{a}{w}}" for c, a, w in zip(cells, align, widths)) + " |"
+
+    sep = "|" + "|".join(
+        (":" + "-" * (w + 1)) if a == "<" else ("-" * (w + 1) + ":")
+        for a, w in zip(align, widths)) + "|"
+
+    print("\n" + fmt_row(header))
+    print(sep)
+    for r in body:
+        print(fmt_row(r))
 
 
 if __name__ == "__main__":
