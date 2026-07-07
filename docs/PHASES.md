@@ -68,11 +68,19 @@ Done (logs: `Implementing_Phase4_001…006`, all green first try — no kernel c
 - Pre-flip gate fix: routing now requires `groups == 1 and deformable_groups == 1` (inferred from shapes as torchvision does; groups was hardcoded 1, and dg=2 inference had silently routed native). Then `_BACKWARD_READY = True` as its own commit; full unforced regression green.
 - Post-flip follow-ups: `test_grad_call_routes_native` (grad_fn assert guards the gate); `example02` retargeted from torchvision to the package (its CPU-vs-MPS check had been comparing the CPU fallback with itself — diffs exactly 0.0); diag ladder "Next:" pointers updated.
 
-## Phase 5 — Packaging & performance ⬜ Not started
+## Phase 5 — groups/dg > 1, perf baseline, packaging ✅ Done (2026-07-07)
 
-- `benchmarks/bench.py`: MPS native vs CPU-fallback timings.
-- README install/usage polish, pin tested torch/torchvision versions.
-- Optional: precompiled `.metallib`, threadgroup tuning, channels-last, `groups` / `deformable_groups` beyond 1 (kernels assume 1; `ops.py` routes such calls to the fallback — lift `native_capable` once they land), half precision.
+**Goal:** `groups > 1` / `deformable_groups > 1` run natively (capability gate lifted), performance measured and recorded, package release-ready. See [PHASE5_PLAN.md](PHASE5_PLAN.md) for the plan this followed.
+
+Done (logs: `Implementing_Phase5_001…006`, all green first try — no kernel changes needed in the entire phase):
+
+- **dg > 1 on-device** (001): the dg index math from Phase 1 was correct as written — zero kernel changes. Skipped dg=2 placeholders became real forward/backward matrix cases (cpg=2, cpg=3 non-power-of-two, dg=C, mask on/off, asym, non-scalar upstream grad). Diag ladders gained dg stages, incl. the distinct-constant-offset-per-group trick: a wrong `deformable_group_index` reads valid memory from the *wrong* group — plausible values, not NaN — so each group gets a different constant offset.
+- **groups > 1 forward** (002): host-side only — `deformable_im2col` fills all C channels regardless of groups, so the flat `mm` became `at::bmm` over zero-copy views (weight `(g, outC/g, C/g·kh·kw)`, columns `(g, C/g·kh·kw, out_hw)`; channel-major buffer → contiguous group row-blocks; `view()` throws rather than copies). One GEMM dispatch per image, outside `dispatch_sync` (same serial-queue rule as `mm`). Tests: groups=2 × {C=4, C=6} × mask × asym, groups=2+dg=2 cross term, groups=outC depthwise.
+- **groups > 1 backward** (003): same change shape — `grad_columns = bmm(w_gᵀ, go_g)` viewed flat (col2im/col2im_coord consume the full-C buffer unchanged; groups never reaches them), `grad_weight` accumulated as `(g, outC/g, C/g·kh·kw)` via `bmm(go_g, cols_gᵀ)` — the final view was written group-ready in Phase 3. Verified off-device against a block-diagonal-weight ground truth first. Tests mirror 002 + groups=2 non-scalar upstream grads (grouped-GEMM transposition errors hide under `sum()`) + gradcheck groups=2/dg=2 with CPU-fp32 calibration twins.
+- **Capability gate lifted** (004, own commit like the Phase 4 flip): `native_capable` deleted from `ops.py` — readiness flags are the only gate; groups/dg still inferred from shapes and passed through. 158 tests pass identically forced and unforced; `test_grad_call_routes_native_groups2_dg2` inverts Phase 4's gate test.
+- **Perf baseline** (005): `benchmarks/bench.py` extended (fwd+bwd with pre-made upstream grad; shapes 8×64×64×64 k3, 2×256×100×152, groups=32; native / MPS-fallback / pure-CPU impls; aligned markdown table output). **Training ~14x vs the MPS fallback path, 15–17x vs pure CPU.** Finding: current torchvision nightlies run the *forward* natively on MPS (fwd ~parity, 0.8–1.2x) but the backward still falls back — training is the package's payoff. Table + methodology in [STATUS.md](STATUS.md).
+- **Packaging** (006): version 0.1.0 (+ `__init__.__version__` sync), classifiers, tested pins as *tested-with* notes (nightlies can't be hard-pinned), README supported-range/API statement + performance summary, docs sync.
+- Stretch items (threadgroup tuning, per-batch dispatch batching, precompiled `.metallib`, half precision, channels-last) deliberately **not** taken: the phase exits on correctness + measured baseline + packaging; tuning waits for a profiler-identified bottleneck. The recorded baseline is what any such work must beat.
 
 ---
 

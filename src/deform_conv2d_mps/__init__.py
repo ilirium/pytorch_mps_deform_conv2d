@@ -8,4 +8,4 @@ from .ops import deform_conv2d
 from .module import DeformConv2d
 
 __all__ = ["deform_conv2d", "DeformConv2d"]
-__version__ = "0.0.1"
+__version__ = "0.1.0"  # keep in sync with pyproject.toml

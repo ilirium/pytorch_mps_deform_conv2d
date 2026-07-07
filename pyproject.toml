@@ -4,12 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deform_conv2d_mps"
-version = "0.0.1"
+# 0.1.0 (2026-07-07): Phase 5 — full fp32/NCHW range native on MPS
+# (groups > 1 and deformable_groups > 1 included), perf baseline recorded.
+version = "0.1.0"
 description = "Deformable Conv2d (DCNv1/v2) with a native Metal (MPS) kernel for Apple Silicon, API-compatible with torchvision."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [{ name = "Ilya" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: GPU",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Objective C",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# Tested against nightlies torch==2.14.0.dev20260622 /
+# torchvision==0.29.0.dev20260622 (see README "Tested versions").
+# Nightlies can't be hard-pinned sensibly; the >= floors below only keep
+# clearly-too-old stables out. Build with --no-build-isolation against the
+# torch you run (see README install notes).
 dependencies = ["torch>=2.2"]
 
 [project.optional-dependencies]

@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-07-07
 
-**Overall:** Phases 0–4 done; Phase 5 Steps 1–5 done — **native forward AND backward are live by default on MPS for the full parameter range** (fp32, NCHW), including `groups > 1` and `deformable_groups > 1` (capability gate lifted 2026-07-07 after `Implementing_Phase5_004_good.txt`; 158 tests pass identically forced and unforced). Perf baseline measured and recorded below (`Implementing_Phase5_005_good.txt`): **~14x faster training than the MPS fallback path** across all benched shapes. Remaining: Step 6 packaging polish.
+**Overall:** Phases 0–5 done — **v0.1.0, release-ready.** Native forward AND backward are live by default on MPS for the full parameter range (fp32, NCHW), including `groups > 1` and `deformable_groups > 1` (capability gate lifted 2026-07-07; 158 tests pass identically forced and unforced). Perf baseline measured and recorded below: **~14x faster training than the MPS fallback path** across all benched shapes. Nothing scheduled remains; stretch perf items are optional and gated on profiler evidence.
 
 ## Phase overview
 
@@ -13,7 +13,7 @@
 | 2 | Forward correctness tests vs torchvision | ✅ Done (60 native cases pass; forward enabled for inference) |
 | 3 | Native backward (`col2im`, `col2im_coord`) | ✅ Done (all 4 `diag_col2im` stages pass on-device; gated off pending Phase 4) |
 | 4 | Backward tests + gradcheck | ✅ Done (65 forced-native cases incl. gradcheck + training loop; `_BACKWARD_READY = True`) |
-| 5 | groups/dg > 1, perf baseline, packaging | 🔶 Steps 1–5 done (gate lifted, 158 tests, bench recorded); Step 6 packaging remains |
+| 5 | groups/dg > 1, perf baseline, packaging | ✅ Done (gate lifted, 158 tests forced==unforced, bench baseline recorded, v0.1.0) |
 
 ## What works today
 
@@ -29,9 +29,11 @@
 
 ## What's missing
 
-- Packaging polish (Phase 5 Step 6): README install/usage/pins finalisation, `pyproject.toml` version bump + classifiers, docs sync.
-- Perf is *measured* but untuned — the baseline below is what any stretch perf work (threadgroup tuning, dispatch batching, precompiled `.metallib`) must beat; none of it blocks phase exit.
-- Half precision and channels-last: explicitly out of scope (stretch).
+Nothing scheduled — all six phases are complete. Unscheduled stretch items
+(each requires profiler evidence first; the baseline below is what they must
+beat): threadgroup tuning, per-batch dispatch batching, precompiled
+`.metallib` (removes first-call compile latency), half precision,
+channels-last.
 
 ## Phase 1 implementation notes (2026-07-05)
 
@@ -77,6 +79,7 @@
   3. **groups > 1 backward** (003): same shape of change — `grad_columns = bmm(w_gᵀ, go_g)` viewed flat (col2im/col2im_coord consume the full-C buffer unchanged; groups never reaches them), `grad_weight` accumulated as `(g, outC/g, C/g·kh·kw)`. Grouped grad GEMMs verified off-device against a block-diagonal-weight ground truth before building. Backward matrix mirrors the forward cases + groups=2 non-scalar upstream grads (grouped-GEMM transposition errors hide under `sum()`); gradcheck groups=2/dg=2 with CPU calibration twins.
   4. **Gate lift** (004): `native_capable` deleted from `ops.py`; 158 tests pass identically forced and unforced; `test_grad_call_routes_native_groups2_dg2` inverts Phase 4's gate test.
   5. **Benchmarks** (005): `benchmarks/bench.py` extended — fwd+bwd timing with pre-made upstream grad, three shapes, three impls (native MPS / torchvision-on-MPS-tensors fallback / honest pure-CPU torchvision). Baseline below.
+  6. **Packaging** (006): version 0.1.0 (pyproject + `__init__.__version__`), classifiers, tested pins recorded as *tested-with* notes (nightlies can't be hard-pinned), README supported-range/API statement, PHASES.md Phase 5 → ✅.
 
 ### Perf baseline (2026-07-07, M-series, torch 2.14.0.dev20260622)
 
@@ -94,7 +97,10 @@
 
 ## Next actions
 
-1. Phase 5 Step 6: packaging polish — README (install rationale, API statement, supported range, bench summary, tested pins), `pyproject.toml` version bump/classifiers, docs sync (PHASES.md Phase 5 → ✅).
+None scheduled — the project is at v0.1.0 with all phases complete. Optional
+stretch work (own commit each, only with a profiler-identified bottleneck):
+threadgroup tuning, dispatch batching, precompiled `.metallib`, half
+precision, channels-last.
 
 ## Environment / constraints
 

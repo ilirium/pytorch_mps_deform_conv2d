@@ -22,9 +22,21 @@ forces slow `.cpu()` round-trips. This package provides the missing kernel,
 > verified on-device). Non-MPS devices always use the torchvision fallback.
 > See `IMPLEMENTATION_PLAN.md` for the full roadmap.
 
-## PyTorch and Torchvision version
+## Supported range
 
-Nightly, installed 2026-06023:
+- **API:** drop-in for `torchvision.ops.deform_conv2d` and `DeformConv2d` —
+  same signatures, same `state_dict` layout, DCNv1 (`mask=None`) and DCNv2.
+- **Native path:** fp32, NCHW (non-contiguous inputs are made contiguous),
+  any valid `groups` / `deformable_groups` (native since Phase 5),
+  asymmetric stride/padding/dilation, optional bias.
+- **Not implemented natively:** half precision (float32 is enforced) and
+  channels-last-optimised layouts. Non-MPS devices always use the
+  torchvision fallback.
+
+## Tested versions
+
+Nightlies, installed 2026-06-23 (*tested-with*, not hard pins — see
+`pyproject.toml` notes):
 - torch==2.14.0.dev20260622
 - torchvision==0.29.0.dev20260622
 
@@ -116,4 +128,8 @@ bypasses the readiness gating for testing.
 - **Phase 2** — forward tests vs torchvision. ✅
 - **Phase 3** — native backward (`col2im`, `col2im_coord`). ✅
 - **Phase 4** — backward tests + gradcheck. ✅
-- **Phase 5** — packaging, perf tuning, groups / half precision
+- **Phase 5** — `groups` / `deformable_groups` > 1 native, perf baseline, packaging. ✅
+
+Stretch (unscheduled, only with profiler evidence): threadgroup tuning,
+per-batch dispatch batching, precompiled `.metallib`, half precision,
+channels-last.
