@@ -49,7 +49,7 @@ _TOL = {
 
 def _run_backward_case(N=2, inC=4, outC=6, H=9, W=9, kh=3, kw=3,
                        stride=1, pad=1, dil=1, use_mask=True, use_bias=True,
-                       dg=1, offset_scale=1.0, upstream="sum"):
+                       dg=1, groups=1, offset_scale=1.0, upstream="sum"):
     """Run one case on MPS and on the torchvision CPU reference with
     identical inputs; compare every gradient with per-grad tolerances.
 
@@ -65,8 +65,9 @@ def _run_backward_case(N=2, inC=4, outC=6, H=9, W=9, kh=3, kw=3,
     out_w = (W + 2 * pw - dw * (kw - 1) - 1) // sw + 1
 
     # CPU leaves first, then identical MPS copies (independent of MPS RNG).
+    # groups is inferred from weight.size(1), as torchvision does.
     xc = torch.randn(N, inC, H, W, requires_grad=True)
-    wc = torch.randn(outC, inC, kh, kw, requires_grad=True)
+    wc = torch.randn(outC, inC // groups, kh, kw, requires_grad=True)
     bc = torch.randn(outC, requires_grad=True) if use_bias else None
     oc = (offset_scale * torch.randn(N, 2 * dg * kh * kw, out_h, out_w)
           ).requires_grad_(True)
@@ -176,6 +177,22 @@ _EXTRA_CASES = [
     # dg=2 with a non-scalar upstream grad — the offset/mask channel count
     # scales with dg, so grad_offset/grad_mask GEMM wiring sees new shapes.
     pytest.param(dict(dg=2, upstream="randn"), id="dg2-nonscalar-grad"),
+    # Phase 5 Step 3: groups > 1 — grad_col = wᵀ·grad_out and grad_weight +=
+    # grad_out·colᵀ are now bmm over (groups, ...) views; a wrong slice or
+    # transpose mixes channels across groups. Mirrors the Step 2 forward
+    # cases, incl. the groups x dg cross term and groups=outC.
+    pytest.param(dict(groups=2), id="g2"),
+    pytest.param(dict(groups=2, use_mask=False), id="g2-v1"),
+    pytest.param(dict(groups=2, inC=6), id="g2-c6"),
+    pytest.param(dict(groups=2, H=8, W=11, stride=(2, 1), pad=(0, 2),
+                      dil=(2, 1)), id="g2-asym"),
+    pytest.param(dict(groups=2, dg=2), id="g2-dg2"),
+    pytest.param(dict(inC=6, outC=6, groups=6), id="g-eq-outC-depthwise"),
+    # Load-bearing (plan risk list): grouped-GEMM slice/transposition errors
+    # hide under sum()'s constant grad_output — not optional.
+    pytest.param(dict(groups=2, upstream="randn"), id="g2-nonscalar-grad"),
+    pytest.param(dict(groups=2, dg=2, upstream="randn"),
+                 id="g2-dg2-nonscalar-grad"),
 ]
 
 
@@ -226,21 +243,21 @@ _expected_fp32_warning = pytest.mark.filterwarnings(
     "ignore:Input #.*double precision:UserWarning")
 
 
-def _gradcheck_inputs(device, use_mask, dtype=torch.float32):
+def _gradcheck_inputs(device, use_mask, dtype=torch.float32, groups=1, dg=1):
     """Tiny case — gradcheck is O(numel) backward calls.
 
     Offsets are kept >= 0.1 away from integer grid points (Phase 3 trick):
     bilinear kinks are genuine non-differentiability, not bugs, and eps=1e-3
-    perturbations never cross the 0.1 buffer.
+    perturbations never cross the 0.1 buffer. groups and dg are inferred by
+    both ops from weight.size(1) / offset channels.
     """
     torch.manual_seed(0)
     N, inC, outC, k, H, W = 1, 2, 2, 2, 5, 5
-    dg = 1
     out = H - k + 1  # stride 1, pad 0
     mk = lambda *s: torch.randn(*s, device=device, dtype=dtype,
                                 requires_grad=True)
     x = mk(N, inC, H, W)
-    w = mk(outC, inC, k, k)
+    w = mk(outC, inC // groups, k, k)
     b = mk(outC)
     o = torch.randn(N, 2 * dg * k * k, out, out,
                     device=device, dtype=dtype) * 0.5
@@ -252,8 +269,8 @@ def _gradcheck_inputs(device, use_mask, dtype=torch.float32):
     return x, o, w, b, m
 
 
-def _run_fp32_gradcheck(op, device, use_mask):
-    x, o, w, b, m = _gradcheck_inputs(device, use_mask)
+def _run_fp32_gradcheck(op, device, use_mask, groups=1, dg=1):
+    x, o, w, b, m = _gradcheck_inputs(device, use_mask, groups=groups, dg=dg)
     if use_mask:
         fn = lambda xx, oo, ww, bb, mm: op(xx, oo, ww, bias=bb, mask=mm)
         inputs = (x, o, w, b, m)
@@ -284,6 +301,30 @@ def test_gradcheck_native_fp32(use_mask):
     Run with DCN_MPS_FORCE_NATIVE=1; unforced it exercises the fallback.
     """
     _run_fp32_gradcheck(deform_conv2d, "mps", use_mask)
+
+
+# Phase 5 Step 3: gradcheck with groups=2 and with dg=2 (Phase 4 knobs,
+# mask on so grad_mask is covered too), plus CPU calibration twins — if the
+# knobs are too tight for fp32, the twin fails first and the native run is
+# exonerated.
+
+@_expected_fp32_warning
+@pytest.mark.parametrize("groups,dg", [(2, 1), (1, 2)])
+def test_gradcheck_cpu_fp32_calibration_grouped(groups, dg):
+    """Calibration twin for the grouped/dg native gradcheck (same knobs)."""
+    _run_fp32_gradcheck(tv_deform_conv2d, "cpu", True, groups=groups, dg=dg)
+
+
+@_expected_fp32_warning
+@requires_mps()
+@pytest.mark.parametrize("groups,dg", [(2, 1), (1, 2)])
+def test_gradcheck_native_fp32_grouped(groups, dg):
+    """fp32 gradcheck through the native path with groups=2 / dg=2.
+
+    Run with DCN_MPS_FORCE_NATIVE=1; unforced it exercises the fallback
+    until the Step 4 gate lift.
+    """
+    _run_fp32_gradcheck(deform_conv2d, "mps", True, groups=groups, dg=dg)
 
 
 def test_gradcheck_cpu_reference():

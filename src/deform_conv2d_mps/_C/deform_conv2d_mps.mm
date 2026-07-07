@@ -658,14 +658,21 @@ std::tuple<at::Tensor, at::Tensor> deformable_col2im_coord(
 //
 // Per batch element (threading rule: every ATen op OUTSIDE dispatch_sync;
 // the kernel dispatches re-fetch the command buffer internally):
-//   1. grad_columns = W^T @ grad_output[n]                      (ATen mm)
+//   1. grad_columns = W^T @ grad_output[n] — grouped (Phase 5): bmm of
+//      w_g.transpose(1,2) (g, C/g*kh*kw, outC/g) with grad_output[n] viewed
+//      as (g, outC/g, out_hw); result viewed flat as (C*kh*kw, out_hw)
 //   2. coord kernel(grad_columns, x[n], off[n], msk[n])
 //        -> grad_offset[n], grad_mask[n]
 //   3. col2im kernel(grad_columns, off[n], msk[n]) -> grad_input[n]
+//      (col2im / col2im_coord consume the full-C column buffer and only
+//      know about dg — groups never reaches them)
 //   4. im2col kernel(x[n], off[n], msk[n]) -> columns (recomputed, as the
 //      reference does — cheaper than saving N column buffers from forward)
-//   5. grad_weight += grad_output[n] @ columns^T                (ATen mm)
+//   5. grad_weight += grad_output[n] @ columns^T — grouped: bmm of go_g
+//      with cols_g.transpose(1,2), accumulated into (g, outC/g, C/g*kh*kw)
 // After the loop: grad_bias = grad_output.sum({0, 2, 3}) if bias defined.
+// All grouped views are zero-copy (contiguous buffers; view() throws rather
+// than copies); groups == 1 degenerates to the old flat mm math.
 //
 // Steps 2 and 3 reuse the single-image ops validated by the diag ladder;
 // select(0, n) slices stay views (contiguous, storage_offset-based), which
@@ -698,9 +705,7 @@ deform_conv2d_backward(
     TORCH_CHECK(offset.dim() == 4, "offset must be 4-D, got ", offset.dim());
     TORCH_CHECK(grad_output.dim() == 4, "grad_output must be 4-D, got ",
                 grad_output.dim());
-    TORCH_CHECK(groups == 1,
-                "deform_conv2d_backward: groups != 1 not supported yet (Phase 5), got ",
-                groups);
+    TORCH_CHECK(groups > 0, "groups must be positive, got ", groups);
     TORCH_CHECK(stride_h > 0 && stride_w > 0, "stride must be positive");
     TORCH_CHECK(dilation_h > 0 && dilation_w > 0, "dilation must be positive");
 
@@ -714,6 +719,10 @@ deform_conv2d_backward(
     TORCH_CHECK(w.size(1) * groups == C,
                 "weight shape mismatch: expected in-channels ", C,
                 ", got ", w.size(1) * groups);
+    TORCH_CHECK(C % groups == 0, "channels (", C,
+                ") not divisible by groups (", groups, ")");
+    TORCH_CHECK(outC % groups == 0, "out_channels (", outC,
+                ") not divisible by groups (", groups, ")");
 
     const int64_t out_h =
         (H + 2 * pad_h - dilation_h * (kh - 1) - 1) / stride_h + 1;
@@ -756,11 +765,16 @@ deform_conv2d_backward(
     auto grad_offset = at::zeros_like(off);
     auto grad_mask = use_mask ? at::zeros_like(msk)
                               : at::empty({0}, x.options());
-    auto grad_weight_2d = at::zeros({outC, C * kh * kw}, w.options());
+    // Grouped accumulator/views (Phase 5): mirror of the forward's bmm views.
+    // All zero-copy (contiguous buffers; view() throws rather than copies).
+    const int64_t cpg_kk = (C / groups) * kh * kw;  // rows per group
+    auto grad_weight_g =
+        at::zeros({groups, outC / groups, cpg_kk}, w.options());
     auto columns = at::empty({C * kh * kw, out_hw}, x.options());
     auto empty_mps = at::empty({0}, x.options());  // mask stand-in (DCNv1)
 
-    auto w2d = w.view({outC, C * kh * kw});
+    auto w_g = w.view({groups, outC / groups, cpg_kk});
+    auto cols_g = columns.view({groups, cpg_kk, out_hw});
 
     // Zero-size edge cases: nothing to dispatch; zeroed grads are the answer.
     const bool skip_loop = (N == 0 || C == 0 || outC == 0 || out_hw == 0);
@@ -797,10 +811,14 @@ deform_conv2d_backward(
         for (int64_t n = 0; n < N; ++n) {
             auto off_n = off.select(0, n);
             auto msk_n = use_mask ? msk.select(0, n) : empty_mps;
-            auto go_n = go.select(0, n).view({outC, out_hw});
+            auto go_g = go.select(0, n).view({groups, outC / groups, out_hw});
 
             // 1. Column-buffer gradient (ATen, outside any dispatch block).
-            auto grad_columns = w2d.t().mm(go_n);  // (C*kh*kw, out_hw)
+            // Grouped W^T @ grad_out: (g, cpg_kk, outC/g) @ (g, outC/g,
+            // out_hw); bmm output is contiguous, so the flat view the
+            // kernels consume is zero-copy.
+            auto grad_columns = at::bmm(w_g.transpose(1, 2), go_g)
+                                    .view({C * kh * kw, out_hw});
 
             // 2. grad_offset[n], grad_mask[n] (coord kernel; no atomics).
             auto coord_grads = deformable_col2im_coord(
@@ -857,11 +875,13 @@ deform_conv2d_backward(
             });
 
             // 5. Accumulate grad_weight (ATen, outside the dispatch block).
-            grad_weight_2d.add_(go_n.mm(columns.t()));
+            // Grouped grad_out @ columns^T: (g, outC/g, out_hw) @
+            // (g, out_hw, cpg_kk) -> (g, outC/g, cpg_kk).
+            grad_weight_g.add_(at::bmm(go_g, cols_g.transpose(1, 2)));
         }
     }
 
-    auto grad_weight = grad_weight_2d.view({outC, C / groups, kh, kw});
+    auto grad_weight = grad_weight_g.view({outC, C / groups, kh, kw});
     auto grad_bias = use_bias ? go.sum(at::IntArrayRef{0, 2, 3})
                               : at::empty({0}, x.options());
 
